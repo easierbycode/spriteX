@@ -648,6 +648,71 @@ export function validateCharacterFrames(
   return missing;
 }
 
+export async function loadCharacterPreviewFromAtlas(
+  characterId: string
+): Promise<{ frameRate: number; frames: string[]; textures: string[] } | null> {
+  const db = getDB();
+
+  // 1) Fetch character
+  const charSnap = await get(ref(db, `characters/${characterId}`));
+  if (!charSnap.exists()) return null;
+  const char = charSnap.val() as CharacterData;
+
+  // Determine frame rate (default to 6 when interval not positive)
+  const frameRate =
+    char.interval && char.interval > 0 ? Math.round(1000 / char.interval) : 6;
+
+  const textures = Array.isArray(char.texture) ? char.texture : [];
+  const textureKey = char.textureKey || characterId;
+
+  if (!textureKey) return { frameRate, frames: [], textures };
+
+  // 2) Fetch atlas at atlases/{textureKey}
+  const atlasSnap = await get(ref(db, `atlases/${textureKey}`));
+  if (!atlasSnap.exists()) return { frameRate, frames: [], textures };
+
+  const atlasVal = atlasSnap.val() as { json?: any; png?: string };
+  const atlasJson = atlasVal?.json;
+  const atlasPng = atlasVal?.png; // should be a full DataURL with prefix
+
+  if (!atlasJson || !atlasPng) {
+    return { frameRate, frames: [], textures };
+  }
+
+  // 3) Resolve frames map
+  const framesMap =
+    atlasJson.frames || atlasJson.textures?.[0]?.frames || undefined;
+  if (!framesMap) {
+    return { frameRate, frames: [], textures };
+  }
+
+  // 4) Load atlas image
+  const atlasImg = await new Promise<HTMLImageElement>((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(img); // resolve anyway to avoid throwing
+    img.src = atlasPng;
+  });
+
+  // 5) Extract each requested frame from the atlas image to a standalone PNG
+  const frames: string[] = [];
+  for (const key of textures) {
+    const f = framesMap[key];
+    if (!f || !f.frame) continue;
+    const { x, y, w, h } = f.frame;
+
+    // Only handle non-rotated (your atlases set rotated:false)
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const cctx = c.getContext("2d")!;
+    cctx.drawImage(atlasImg, x, y, w, h, 0, 0, w, h);
+    frames.push(c.toDataURL("image/png"));
+  }
+
+  return { frameRate, frames, textures };
+}
+
 export default {
   fetchAllCharacters,
   fetchCharacter,
@@ -666,5 +731,6 @@ export default {
   loadCharacterPreview,
   validateCharacterFrames,
   hexToRgb,
-  rgbToHex
+  rgbToHex,
+  loadCharacterPreviewFromAtlas
 };

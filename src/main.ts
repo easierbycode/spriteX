@@ -5,7 +5,7 @@ import {
   saveSpritesBatchToRTDB,
   buildAtlas,
   saveAtlas,
-  loadCharacterPreview,
+  loadCharacterPreviewFromAtlas, // UPDATED: use atlas-based preview
   rgbToHex,
   hexToRgb,
   type DetectedSprite,
@@ -237,9 +237,10 @@ async function loadCharacterAndPreview() {
     return;
   }
 
-  const res = await loadCharacterPreview(id);
+  // Atlas-based preview: fetch character, then its atlas, and slice frames by keys.
+  const res = await loadCharacterPreviewFromAtlas(id);
   if (!res || !res.frames.length) {
-    alert("No frames found for character.");
+    alert("No frames found for character or its atlas.");
     return;
   }
 
