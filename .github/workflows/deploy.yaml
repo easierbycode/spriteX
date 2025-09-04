@@ -11,9 +11,13 @@ permissions:
   pages: write
   id-token: write
 
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
 jobs:
   build_web:
-    name: Build and Deploy Web (GitHub Pages)
+    name: Build Web
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -31,12 +35,23 @@ jobs:
         run: npm run build
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v2
+        uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
+  deploy_pages:
+    name: Deploy GitHub Pages
+    needs: build_web
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
-        id: deployment
+        id: deploy
         uses: actions/deploy-pages@v4
 
   build_android:
@@ -89,5 +104,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
-          path: |
-            cordova/platforms/android/app/build/outputs/apk/debug/app-debug.apk
+          path: cordova/platforms/android/app/build/outputs/apk/debug/app-debug.apk

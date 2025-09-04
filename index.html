@@ -99,7 +99,8 @@
         cursor: not-allowed;
       }
       input[type="text"],
-      input[type="url"] {
+      input[type="url"],
+      select {
         padding: 6px 8px;
         border: 1px solid #bbb;
         border-radius: 4px;
@@ -206,11 +207,9 @@
     <div class="panel">
       <div class="subtitle">Character Preview</div>
       <div class="row">
-        <input
-          id="characterIdInput"
-          type="text"
-          placeholder="Character ID (e.g. enemy1)"
-        />
+        <select id="characterSelect">
+          <option value="">-- Select a character --</option>
+        </select>
         <button id="loadCharacterBtn" class="btn">Load Preview</button>
         <div>FPS: <span id="frameRateSpan">-</span></div>
       </div>

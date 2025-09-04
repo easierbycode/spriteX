@@ -5,7 +5,8 @@ import {
   saveSpritesBatchToRTDB,
   buildAtlas,
   saveAtlas,
-  loadCharacterPreviewFromAtlas, // UPDATED: use atlas-based preview
+  loadCharacterPreviewFromAtlas,
+  fetchAllCharacters,
   rgbToHex,
   hexToRgb,
   type DetectedSprite,
@@ -229,11 +230,53 @@ async function saveAtlasToFirebase() {
   alert(`Atlas "${atlasName}" saved to RTDB (atlases/${atlasName}).`);
 }
 
+async function populateCharacterSelect() {
+  const select = $("characterSelect") as HTMLSelectElement;
+  if (!select) return;
+
+  // Placeholder while loading
+  select.innerHTML = "";
+  const loadingOpt = document.createElement("option");
+  loadingOpt.value = "";
+  loadingOpt.textContent = "Loading characters...";
+  select.appendChild(loadingOpt);
+  select.disabled = true;
+
+  try {
+    const chars = await fetchAllCharacters();
+    select.innerHTML = "";
+
+    // Default placeholder
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "-- Select a character --";
+    select.appendChild(placeholder);
+
+    // Populate list (use character name if present, else key)
+    Object.entries(chars).forEach(([id, data]) => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = data?.name || id;
+      select.appendChild(opt);
+    });
+
+    select.disabled = false;
+  } catch (err) {
+    select.innerHTML = "";
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "Failed to load characters";
+    select.appendChild(opt);
+    select.disabled = true;
+    console.error(err);
+  }
+}
+
 async function loadCharacterAndPreview() {
-  const input = $("characterIdInput") as HTMLInputElement;
-  const id = (input?.value || "").trim();
+  const select = $("characterSelect") as HTMLSelectElement;
+  const id = select?.value || "";
   if (!id) {
-    alert("Enter a character id.");
+    alert("Select a character.");
     return;
   }
 
@@ -314,7 +357,8 @@ function wireUI() {
   );
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   setupCanvases();
   wireUI();
+  await populateCharacterSelect();
 });
