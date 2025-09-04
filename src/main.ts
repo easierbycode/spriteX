@@ -1,3 +1,4 @@
+// src/main.ts
 import {
   smartDetectSprites,
   extractSpriteDataURLs,
@@ -8,7 +9,7 @@ import {
   rgbToHex,
   hexToRgb,
   type DetectedSprite,
-  type RGB
+  type RGB,
 } from "./atlasManager";
 
 let originalCanvas: HTMLCanvasElement;
@@ -20,6 +21,7 @@ let detected: DetectedSprite[] = [];
 let selected = new Set<number>();
 let detectedBg: RGB | null = null;
 let detectedTolerance = 12;
+
 let characterAnimTimer: number | null = null;
 
 function $(id: string) {
@@ -29,20 +31,23 @@ function $(id: string) {
 function setupCanvases() {
   originalCanvas = $("originalCanvas") as HTMLCanvasElement;
   overlayCanvas = $("overlayCanvas") as HTMLCanvasElement;
+
   originalCtx = originalCanvas.getContext("2d", {
-    willReadFrequently: true
+    willReadFrequently: true,
   }) as CanvasRenderingContext2D;
   overlayCtx = overlayCanvas.getContext("2d", {
-    willReadFrequently: true
+    willReadFrequently: true,
   }) as CanvasRenderingContext2D;
 
   overlayCanvas.addEventListener("click", (ev) => {
     const rect = overlayCanvas.getBoundingClientRect();
     const x = Math.floor(ev.clientX - rect.left);
     const y = Math.floor(ev.clientY - rect.top);
+
     const idx = detected.findIndex(
       (s) => x >= s.x && x < s.x + s.w && y >= s.y && y < s.y + s.h
     );
+
     if (idx >= 0) {
       if (selected.has(idx)) selected.delete(idx);
       else selected.add(idx);
@@ -62,6 +67,7 @@ function setCanvasSize(w: number, h: number) {
 function drawOverlay() {
   overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
   overlayCtx.lineWidth = 1;
+
   for (let i = 0; i < detected.length; i++) {
     const s = detected[i];
     overlayCtx.strokeStyle = selected.has(i)
@@ -74,23 +80,29 @@ function drawOverlay() {
 function renderSelectedThumbs() {
   const cont = $("selectedSpritesContainer") as HTMLDivElement;
   cont.innerHTML = "";
+
   if (!selected.size) {
-    cont.textContent = "No sprites selected";
+    cont.textContent =
+      'No sprites selected. Tap detected boxes on the canvas to select.';
     return;
   }
+
   selected.forEach((i) => {
     const s = detected[i];
     const c = document.createElement("canvas");
     c.width = s.w;
     c.height = s.h;
+
     const cctx = c.getContext("2d")!;
     cctx.drawImage(originalCanvas, s.x, s.y, s.w, s.h, 0, 0, s.w, s.h);
+
     const img = document.createElement("img");
     img.src = c.toDataURL("image/png");
     img.style.width = "96px";
     img.style.height = "auto";
     img.style.border = "1px dashed #aaa";
     img.style.margin = "4px";
+
     cont.appendChild(img);
   });
 }
@@ -98,14 +110,17 @@ function renderSelectedThumbs() {
 async function loadFromURL(url: string) {
   const img = new Image();
   img.crossOrigin = "Anonymous";
+
   await new Promise<void>((resolve, reject) => {
     img.onload = () => resolve();
     img.onerror = () => reject(new Error("Failed to load image"));
     img.src = url;
   });
+
   setCanvasSize(img.naturalWidth, img.naturalHeight);
   originalCtx.clearRect(0, 0, originalCanvas.width, originalCanvas.height);
   originalCtx.drawImage(img, 0, 0);
+
   detected = [];
   selected.clear();
   drawOverlay();
@@ -128,14 +143,19 @@ function runDetect(explicitBg?: RGB | null) {
     originalCanvas.height,
     explicitBg
   );
+
   detected = res.sprites;
   detectedBg = res.bgColor;
   detectedTolerance = res.tolerance;
-  selected = new Set(detected.map((_, i) => i));
+
+  // Start with no selection; user taps to select/deselect.
+  selected = new Set();
+
   const bgInput = $("bgColorInput") as HTMLInputElement;
   if (detectedBg && bgInput) {
     bgInput.value = rgbToHex(detectedBg);
   }
+
   drawOverlay();
   renderSelectedThumbs();
 }
@@ -145,18 +165,19 @@ async function saveSelectedSpritesToFirebase() {
     alert("No sprites selected.");
     return;
   }
+
   const nameInput = $("spriteNamePrefix") as HTMLInputElement;
   const baseName = (nameInput?.value || "sprite").trim();
 
   const boxes = [...selected].map((i) => detected[i]);
   const map = extractSpriteDataURLs(originalCanvas, boxes, {
     bgColor: detectedBg,
-    tolerance: detectedTolerance
+    tolerance: detectedTolerance,
   });
 
   await saveSpritesBatchToRTDB(map, {
     baseName,
-    stripPrefix: true
+    stripPrefix: true, // store raw base64 (no data: prefix)
   });
 
   alert(`Saved ${selected.size} sprites to Firebase (sprites/*).`);
@@ -167,10 +188,11 @@ async function buildAtlasAndPreview() {
     alert("No sprites selected.");
     return;
   }
+
   const boxes = [...selected].map((i) => detected[i]);
   const map = extractSpriteDataURLs(originalCanvas, boxes, {
     bgColor: detectedBg,
-    tolerance: detectedTolerance
+    tolerance: detectedTolerance,
   });
 
   const named: Record<string, string> = {};
@@ -180,16 +202,20 @@ async function buildAtlasAndPreview() {
   }
 
   const { dataURL, json } = await buildAtlas(named);
+
   const img = $("atlasPreviewImg") as HTMLImageElement;
   img.src = dataURL;
+
   (img as any)._atlasJson = json;
   (img as any)._atlasDataURL = dataURL;
+
   $("saveAtlasFirebaseBtn")!.removeAttribute("disabled");
 }
 
 async function saveAtlasToFirebase() {
   const nameInput = $("atlasNameInput") as HTMLInputElement;
   const atlasName = (nameInput?.value || "untitled_atlas").trim();
+
   const img = $("atlasPreviewImg") as HTMLImageElement;
   const json = (img as any)._atlasJson;
   const dataURL = (img as any)._atlasDataURL;
@@ -247,18 +273,24 @@ function wireUI() {
     }
   });
 
-  ($("fileInput") as HTMLInputElement).addEventListener("change", async (ev) => {
-    const t = ev.target as HTMLInputElement;
-    if (t.files && t.files[0]) {
-      await loadFromFile(t.files[0]);
+  ($("fileInput") as HTMLInputElement).addEventListener(
+    "change",
+    async (ev) => {
+      const t = ev.target as HTMLInputElement;
+      if (t.files && t.files[0]) {
+        await loadFromFile(t.files[0]);
+      }
     }
-  });
+  );
 
-  ($("detectSpritesBtn") as HTMLButtonElement).addEventListener("click", () => {
-    const bgInput = $("bgColorInput") as HTMLInputElement;
-    const explicit = bgInput?.value ? hexToRgb(bgInput.value) : null;
-    runDetect(explicit ?? undefined);
-  });
+  ($("detectSpritesBtn") as HTMLButtonElement).addEventListener(
+    "click",
+    () => {
+      const bgInput = $("bgColorInput") as HTMLInputElement;
+      const explicit = bgInput?.value ? hexToRgb(bgInput.value) : null;
+      runDetect(explicit ?? undefined);
+    }
+  );
 
   ($("saveSpritesFirebaseBtn") as HTMLButtonElement).addEventListener(
     "click",
