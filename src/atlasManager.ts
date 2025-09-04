@@ -1,5 +1,13 @@
-// atlasManager.ts
+// src/atlasManager.ts
+// - Firebase RTDB helpers (uses your firebase-config wrappers)
+// - Improved sprite detection (auto background detect + keying)
+// - Atlas build (JSON + PNG DataURL) and save
+// - Save individual sprites to RTDB (optional strip prefix)
+// - Character preview from atlas (handles atlas.json as object or string)
+
 import { getDB, ref, get, set } from "./firebase-config";
+
+/** ============================ Types ============================ */
 
 export interface CharacterData {
   name: string;
@@ -8,6 +16,8 @@ export interface CharacterData {
   size?: { x: number; y: number };
   anchor?: { x: number; y: number };
   body?: { x: number; y: number };
+
+  // Enemy-like fields
   hp?: number;
   spgage?: number;
   interval?: number;
@@ -15,6 +25,8 @@ export interface CharacterData {
   shadowOffsetY?: number;
   shadowReverse?: boolean;
   speed?: number;
+
+  // Player-like fields
   barrier?: any;
   spDamage?: number;
   defaultShootName?: string;
@@ -27,32 +39,39 @@ export interface CharacterData {
 
 export interface AtlasData {
   json: any;
-  png: string;
+  png: string; // DataURL with prefix
 }
+
 export interface SpriteData {
   name: string;
-  png: string;
+  png: string; // base64 (may or may not have prefix depending on your DB)
 }
+
 export interface SpriteRect {
   x: number;
   y: number;
   w: number;
   h: number;
 }
+
 export interface RGB {
   r: number;
   g: number;
   b: number;
 }
+
 export interface DetectedSprite extends SpriteRect {
   area?: number;
 }
+
 export interface SmartDetectResult {
   sprites: DetectedSprite[];
   bgColor: RGB | null;
   tolerance: number;
   usedKeyOut: boolean;
 }
+
+/** ========================= Firebase =========================== */
 
 export async function fetchAllCharacters(): Promise<
   Record<string, CharacterData>
@@ -88,7 +107,8 @@ export async function fetchAtlas(atlasKey: string): Promise<AtlasData | null> {
     const snapshot = await get(ref(db, `atlases/${atlasKey}`));
     if (!snapshot.exists()) return null;
     const val = snapshot.val();
-    return { json: val.json, png: val.png } as AtlasData;
+    const parsedJson = normalizeAtlasJson(val?.json);
+    return { json: parsedJson ?? val?.json ?? null, png: val?.png } as AtlasData;
   } catch (error) {
     console.error(`Error fetching atlas ${atlasKey}:`, error);
     return null;
@@ -136,32 +156,39 @@ export async function saveAtlas(
   }
 }
 
+/** =========================== Utils ============================ */
+
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
+
 function colorDistance(a: RGB, b: RGB): number {
   const dr = a.r - b.r;
   const dg = a.g - b.g;
   const db = a.b - b.b;
   return Math.sqrt(dr * dr + dg * dg + db * db);
 }
+
 function percentile(arr: number[], p: number): number {
   if (arr.length === 0) return 0;
   const sorted = [...arr].sort((x, y) => x - y);
   const idx = clamp(Math.floor((p / 100) * (sorted.length - 1)), 0, sorted.length - 1);
   return sorted[idx];
 }
+
 export function hexToRgb(hex: string): RGB | null {
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   return m
     ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) }
     : null;
 }
+
 export function rgbToHex(rgb: RGB): string {
   const to2 = (v: number) => clamp(v | 0, 0, 255).toString(16).padStart(2, "0");
   return `#${to2(rgb.r)}${to2(rgb.g)}${to2(rgb.b)}`;
 }
 
+/** Border sampling + dominant color (quantized) */
 function sampleBorderDominant(
   imageData: ImageData,
   sampleStride = 2
@@ -200,6 +227,7 @@ function sampleBorderDominant(
       dominant = v.rgb;
     }
   });
+
   const distances = dominant ? samples.map((s) => colorDistance(s, dominant!)) : [];
   return { dominant, distances };
 }
@@ -226,6 +254,38 @@ function keyOutBackground(imageData: ImageData, bg: RGB, tolerance: number) {
     }
   }
 }
+
+function ensureDataURL(s: string): string {
+  return s.startsWith("data:") ? s : `data:image/png;base64,${s}`;
+}
+
+/** Some atlases store json as string. Handle object or (single/double) string. */
+function normalizeAtlasJson(jsonVal: any): any | null {
+  if (jsonVal == null) return null;
+  if (typeof jsonVal === "object") return jsonVal;
+  if (typeof jsonVal !== "string") return null;
+  let str = jsonVal.trim();
+  try {
+    const once = JSON.parse(str);
+    if (typeof once === "string") {
+      try {
+        return JSON.parse(once);
+      } catch {
+        return null;
+      }
+    }
+    return once;
+  } catch {
+    try {
+      str = str.replace(/^\uFEFF/, "").trim();
+      return JSON.parse(str);
+    } catch {
+      return null;
+    }
+  }
+}
+
+/** ===================== Sprite Detection ======================= */
 
 export function detectSpritesFromImageData(
   imageData: ImageData,
@@ -274,13 +334,13 @@ export function detectSpritesFromImageData(
         { dx: 1, dy: 1 },
         { dx: 1, dy: -1 },
         { dx: -1, dy: 1 },
-        { dx: -1, dy: -1 }
+        { dx: -1, dy: -1 },
       ]
     : [
         { dx: 1, dy: 0 },
         { dx: -1, dy: 0 },
         { dx: 0, dy: 1 },
-        { dx: 0, dy: -1 }
+        { dx: 0, dy: -1 },
       ];
 
   const getIdx = (x: number, y: number) => (y * width + x) * 4;
@@ -389,6 +449,7 @@ export function detectSpritesFromImageData(
   return out;
 }
 
+/** Auto bg detect, key-out, then detect on keyed result */
 export function smartDetectSprites(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -429,11 +490,13 @@ export function smartDetectSprites(
     tolerance,
     minArea: 2,
     use8Conn: false,
-    alphaThreshold: 1
+    alphaThreshold: 1,
   });
 
   return { sprites, bgColor: computedBg, tolerance, usedKeyOut };
 }
+
+/** ======================= Atlas Building ======================= */
 
 export function createAtlasJson(
   sprites: Record<string, { width: number; height: number }>
@@ -456,7 +519,7 @@ export function createAtlasJson(
         x: currentX,
         y: currentY,
         w: dimensions.width,
-        h: dimensions.height
+        h: dimensions.height,
       },
       rotated: false,
       trimmed: false,
@@ -464,9 +527,9 @@ export function createAtlasJson(
         x: 0,
         y: 0,
         w: dimensions.width,
-        h: dimensions.height
+        h: dimensions.height,
       },
-      sourceSize: { w: dimensions.width, h: dimensions.height }
+      sourceSize: { w: dimensions.width, h: dimensions.height },
     };
 
     currentX += dimensions.width;
@@ -481,8 +544,8 @@ export function createAtlasJson(
       image: "atlas.png",
       format: "RGBA8888",
       size: { w: maxWidth, h: currentY + rowHeight },
-      scale: "1"
-    }
+      scale: "1",
+    },
   };
 }
 
@@ -551,6 +614,8 @@ async function measureImage(
   });
 }
 
+/** ===================== Extraction & Saving ===================== */
+
 export function extractSpriteDataURLs(
   originalCanvas: HTMLCanvasElement,
   boxes: SpriteRect[],
@@ -602,39 +667,80 @@ export async function saveSpritesBatchToRTDB(
   }
 }
 
-export async function loadCharacterPreview(
+/** ================== Character + Atlas Preview ================== */
+
+/**
+ * Load character preview frames by slicing from its atlas:
+ * - Fetch characters/{id}
+ * - Fetch atlases/{character.textureKey}
+ * - Atlas json may be string or object
+ * - Extract frames for each key in character.texture[]
+ * - Default fps = 6 if interval <= 0 or not set
+ */
+export async function loadCharacterPreviewFromAtlas(
   characterId: string
 ): Promise<{ frameRate: number; frames: string[]; textures: string[] } | null> {
   const db = getDB();
-  const snap = await get(ref(db, `characters/${characterId}`));
-  if (!snap.exists()) return null;
-  const char = snap.val() as CharacterData;
+
+  // Character
+  const charSnap = await get(ref(db, `characters/${characterId}`));
+  if (!charSnap.exists()) return null;
+  const char = charSnap.val() as CharacterData;
+
   const textures = Array.isArray(char.texture) ? char.texture : [];
-  const frames: string[] = [];
-
-  for (const t of textures) {
-    const sSnap = await get(ref(db, `sprites/${t}`));
-    if (!sSnap.exists()) continue;
-    let val: any = sSnap.val();
-    if (typeof val === "string") {
-      frames.push(ensureDataURL(val));
-    } else if (val?.png) {
-      frames.push(ensureDataURL(val.png));
-    } else if (val?.data) {
-      frames.push(ensureDataURL(val.data));
-    }
-  }
-
+  const textureKey = char.textureKey || characterId;
   const frameRate =
     char.interval && char.interval > 0 ? Math.round(1000 / char.interval) : 6;
+
+  if (!textureKey) {
+    return { frameRate, frames: [], textures };
+  }
+
+  // Atlas
+  const atlasSnap = await get(ref(db, `atlases/${textureKey}`));
+  if (!atlasSnap.exists()) return { frameRate, frames: [], textures };
+  const atlasVal = atlasSnap.val() as { json?: any; png?: string };
+
+  const atlasJson = normalizeAtlasJson(atlasVal?.json);
+  const atlasPngRaw = atlasVal?.png;
+  if (!atlasJson || !atlasPngRaw) {
+    return { frameRate, frames: [], textures };
+  }
+
+  const framesMap =
+    atlasJson.frames || atlasJson.textures?.[0]?.frames || undefined;
+  if (!framesMap) {
+    return { frameRate, frames: [], textures };
+  }
+
+  const atlasPng = ensureDataURL(atlasPngRaw);
+
+  // Load atlas image
+  const atlasImg = await new Promise<HTMLImageElement>((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(img);
+    img.src = atlasPng;
+  });
+
+  // Slice frames
+  const frames: string[] = [];
+  for (const key of textures) {
+    const f = framesMap[key];
+    if (!f || !f.frame) continue;
+    const { x, y, w, h } = f.frame;
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const cctx = c.getContext("2d")!;
+    cctx.drawImage(atlasImg, x, y, w, h, 0, 0, w, h);
+    frames.push(c.toDataURL("image/png"));
+  }
 
   return { frameRate, frames, textures };
 }
 
-function ensureDataURL(s: string): string {
-  return s.startsWith("data:") ? s : `data:image/png;base64,${s}`;
-}
-
+/** Validate frames from a character exist in atlas JSON shape */
 export function validateCharacterFrames(
   character: CharacterData,
   atlasJson: any
@@ -648,89 +754,38 @@ export function validateCharacterFrames(
   return missing;
 }
 
-export async function loadCharacterPreviewFromAtlas(
-  characterId: string
-): Promise<{ frameRate: number; frames: string[]; textures: string[] } | null> {
-  const db = getDB();
-
-  // 1) Fetch character
-  const charSnap = await get(ref(db, `characters/${characterId}`));
-  if (!charSnap.exists()) return null;
-  const char = charSnap.val() as CharacterData;
-
-  // Determine frame rate (default to 6 when interval not positive)
-  const frameRate =
-    char.interval && char.interval > 0 ? Math.round(1000 / char.interval) : 6;
-
-  const textures = Array.isArray(char.texture) ? char.texture : [];
-  const textureKey = char.textureKey || characterId;
-
-  if (!textureKey) return { frameRate, frames: [], textures };
-
-  // 2) Fetch atlas at atlases/{textureKey}
-  const atlasSnap = await get(ref(db, `atlases/${textureKey}`));
-  if (!atlasSnap.exists()) return { frameRate, frames: [], textures };
-
-  const atlasVal = atlasSnap.val() as { json?: any; png?: string };
-  const atlasJson = atlasVal?.json;
-  const atlasPng = atlasVal?.png; // should be a full DataURL with prefix
-
-  if (!atlasJson || !atlasPng) {
-    return { frameRate, frames: [], textures };
-  }
-
-  // 3) Resolve frames map
-  const framesMap =
-    atlasJson.frames || atlasJson.textures?.[0]?.frames || undefined;
-  if (!framesMap) {
-    return { frameRate, frames: [], textures };
-  }
-
-  // 4) Load atlas image
-  const atlasImg = await new Promise<HTMLImageElement>((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(img); // resolve anyway to avoid throwing
-    img.src = atlasPng;
-  });
-
-  // 5) Extract each requested frame from the atlas image to a standalone PNG
-  const frames: string[] = [];
-  for (const key of textures) {
-    const f = framesMap[key];
-    if (!f || !f.frame) continue;
-    const { x, y, w, h } = f.frame;
-
-    // Only handle non-rotated (your atlases set rotated:false)
-    const c = document.createElement("canvas");
-    c.width = w;
-    c.height = h;
-    const cctx = c.getContext("2d")!;
-    cctx.drawImage(atlasImg, x, y, w, h, 0, 0, w, h);
-    frames.push(c.toDataURL("image/png"));
-  }
-
-  return { frameRate, frames, textures };
-}
+/** ========================= Default Export ======================= */
 
 export default {
+  // Firebase
   fetchAllCharacters,
   fetchCharacter,
   fetchAtlas,
   fetchAllSprites,
   saveCharacter,
   saveAtlas,
+
+  // Detection
   smartDetectSprites,
   detectSpritesFromImageData,
+
+  // Extraction + saving
   extractSpriteDataURLs,
+  saveSpritesBatchToRTDB,
+
+  // Atlas
   createAtlasJson,
   createAtlasPng,
   createAtlasPngDataURL,
   buildAtlas,
-  saveSpritesBatchToRTDB,
-  loadCharacterPreview,
+
+  // Character preview (atlas-based)
+  loadCharacterPreviewFromAtlas,
+
+  // Validation
   validateCharacterFrames,
+
+  // Utils
   hexToRgb,
   rgbToHex,
-  loadCharacterPreviewFromAtlas
 };
