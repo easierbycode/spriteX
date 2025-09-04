@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SpriteXtractor</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        margin: 0;
+        padding: 16px;
+        background: #f5f6f8;
+        color: #222;
+      }
+      h1 {
+        margin: 0 0 12px;
+        color: #0b5ed7;
+      }
+      .panel {
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 16px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .canv-wrap {
+        position: relative;
+        display: inline-block;
+        border: 1px solid #ccc;
+        background-color: #e0e0e0;
+        background-image: linear-gradient(
+            45deg,
+            #ccc 25%,
+            transparent 25%,
+            transparent 75%,
+            #ccc 75%,
+            #ccc
+          ),
+          linear-gradient(
+            45deg,
+            #ccc 25%,
+            transparent 25%,
+            transparent 75%,
+            #ccc 75%,
+            #ccc
+          );
+        background-size: 20px 20px;
+        background-position: 0 0, 10px 10px;
+        overflow: auto;
+        max-width: 100%;
+      }
+      canvas {
+        display: block;
+      }
+      #overlayCanvas {
+        position: absolute;
+        left: 0;
+        top: 0;
+        pointer-events: auto;
+      }
+      #selectedSpritesContainer img {
+        background-color: #e0e0e0;
+        background-image: linear-gradient(
+            45deg,
+            #ccc 25%,
+            transparent 25%,
+            transparent 75%,
+            #ccc 75%,
+            #ccc
+          ),
+          linear-gradient(
+            45deg,
+            #ccc 25%,
+            transparent 25%,
+            transparent 75%,
+            #ccc 75%,
+            #ccc
+          );
+        background-size: 10px 10px;
+        background-position: 0 0, 5px 5px;
+      }
+      .btn {
+        padding: 8px 12px;
+        background: #0d6efd;
+        border: none;
+        color: #fff;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .btn:disabled {
+        background: #9bbcf9;
+        cursor: not-allowed;
+      }
+      input[type="text"],
+      input[type="url"] {
+        padding: 6px 8px;
+        border: 1px solid #bbb;
+        border-radius: 4px;
+        min-width: 260px;
+      }
+      input[type="color"] {
+        width: 40px;
+        height: 32px;
+        padding: 0;
+        border: 1px solid #bbb;
+        border-radius: 4px;
+      }
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      @media (max-width: 900px) {
+        .grid-2 {
+          grid-template-columns: 1fr;
+        }
+      }
+      .subtitle {
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>SpriteXtractor</h1>
+
+    <div class="panel">
+      <div class="row">
+        <input id="fileUrl" type="url" placeholder="Image URL" />
+        <button id="btnAddUrl" class="btn">Load URL</button>
+        <input id="fileInput" type="file" accept="image/*" />
+        <button id="detectSpritesBtn" class="btn">Auto Detect Sprites</button>
+        <label for="bgColorInput">BG</label>
+        <input id="bgColorInput" type="color" value="#000000" />
+      </div>
+    </div>
+
+    <div class="panel grid-2">
+      <div>
+        <div class="subtitle">Canvas</div>
+        <div class="canv-wrap">
+          <canvas id="originalCanvas" width="640" height="480"></canvas>
+          <canvas id="overlayCanvas" width="640" height="480"></canvas>
+        </div>
+      </div>
+      <div>
+        <div class="subtitle">Selected Sprites</div>
+        <div id="selectedSpritesContainer">No sprites selected</div>
+      </div>
+    </div>
+
+    <div class="panel grid-2">
+      <div>
+        <div class="subtitle">Save Sprites to Firebase</div>
+        <div class="row">
+          <input
+            id="spriteNamePrefix"
+            type="text"
+            placeholder="Sprite name prefix (e.g., enemy)"
+          />
+          <button id="saveSpritesFirebaseBtn" class="btn">
+            Save Sprites (RTDB)
+          </button>
+        </div>
+        <div>Sprites saved without data: prefix under sprites/*</div>
+      </div>
+
+      <div>
+        <div class="subtitle">Atlas Builder</div>
+        <div class="row">
+          <input
+            id="atlasNameInput"
+            type="text"
+            placeholder="Atlas name (e.g., enemy_atlas)"
+          />
+          <button id="buildAtlasBtn" class="btn">Build Atlas</button>
+          <button id="saveAtlasFirebaseBtn" class="btn" disabled>
+            Save Atlas (RTDB)
+          </button>
+        </div>
+        <div class="row" style="margin-top: 8px">
+          <img
+            id="atlasPreviewImg"
+            alt="Atlas Preview"
+            style="max-width: 100%; border: 1px solid #ccc"
+          />
+        </div>
+        <div>Atlases saved as atlases/{name} with json + png (DataURL).</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="subtitle">Character Preview</div>
+      <div class="row">
+        <input
+          id="characterIdInput"
+          type="text"
+          placeholder="Character ID (e.g. enemy1)"
+        />
+        <button id="loadCharacterBtn" class="btn">Load Preview</button>
+        <div>FPS: <span id="frameRateSpan">-</span></div>
+      </div>
+      <div class="row" style="margin-top: 8px">
+        <img
+          id="characterPreviewImg"
+          alt="Character Preview"
+          style="width: 128px; height: auto; border: 1px solid #ccc"
+        />
+      </div>
+    </div>
+
+    <script type="module" src="assets/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,4 @@
+node_modules
+dist
+cordova
+.DS_Store

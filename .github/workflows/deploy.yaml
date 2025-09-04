@@ -1,0 +1,93 @@
+name: Build & Deploy (GitHub Pages + Cordova)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build_web:
+    name: Build and Deploy Web (GitHub Pages)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  build_android:
+    name: Build Cordova Android APK (Debug)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web
+        run: npm run build
+
+      - name: Install Cordova CLI
+        run: npm i -g cordova
+
+      - name: Create Cordova project
+        run: |
+          cordova create cordova io.spritex.app SpriteXtractor
+          rm -rf cordova/www/*
+          cp -r dist/* cordova/www/
+
+      - name: Add Android platform (nightly)
+        working-directory: ./cordova
+        run: |
+          cordova platform add android@15.0.0-nightly.20250904002258062.sha.e4457f7f
+          cordova platforms ls
+
+      - name: Build Android APK (Debug, APK only)
+        working-directory: ./cordova
+        run: cordova build android --debug -- --packageType=apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: |
+            cordova/platforms/android/app/build/outputs/apk/debug/app-debug.apk
