@@ -25,6 +25,11 @@ let detectedTolerance = 12;
 
 let characterAnimTimer: number | null = null;
 
+// BG color eyedropper state
+let bgPickActive = false;
+let bgPickPrevHex: string | null = null;
+let bgPickHoverHex: string | null = null;
+
 function $(id: string) {
   return document.getElementById(id);
 }
@@ -41,6 +46,14 @@ function setupCanvases() {
   }) as CanvasRenderingContext2D;
 
   overlayCanvas.addEventListener("click", (ev) => {
+    // If eyedropper is active, finalize the current hovered color
+    if (bgPickActive) {
+      finishBgPick(true);
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+
     const rect = overlayCanvas.getBoundingClientRect();
     const x = Math.floor(ev.clientX - rect.left);
     const y = Math.floor(ev.clientY - rect.top);
@@ -55,6 +68,38 @@ function setupCanvases() {
       drawOverlay();
       renderSelectedThumbs();
     }
+  });
+
+  // Real-time sampling while in BG pick mode
+  overlayCanvas.addEventListener("mousemove", (ev) => {
+    if (!bgPickActive) return;
+    const rect = overlayCanvas.getBoundingClientRect();
+    const x = Math.floor(ev.clientX - rect.left);
+    const y = Math.floor(ev.clientY - rect.top);
+    if (
+      x < 0 ||
+      y < 0 ||
+      x >= originalCanvas.width ||
+      y >= originalCanvas.height
+    ) {
+      return;
+    }
+    try {
+      const data = originalCtx.getImageData(x, y, 1, 1).data;
+      const hex = rgbToHex({ r: data[0], g: data[1], b: data[2] });
+      bgPickHoverHex = hex;
+      const bgInput = $("bgColorInput") as HTMLInputElement;
+      if (bgInput) bgInput.value = hex; // preview in realtime
+    } catch {
+      // ignore sampling errors
+    }
+  });
+
+  overlayCanvas.addEventListener("mouseleave", () => {
+    if (!bgPickActive) return;
+    // revert preview while outside
+    const bgInput = $("bgColorInput") as HTMLInputElement;
+    if (bgInput && bgPickPrevHex) bgInput.value = bgPickPrevHex;
   });
 }
 
@@ -355,6 +400,22 @@ function wireUI() {
     "click",
     loadCharacterAndPreview
   );
+
+  // Eyedropper: pick BG color from canvas in realtime
+  const pickBtn = $("bgColorPickBtn") as HTMLButtonElement | null;
+  if (pickBtn) {
+    pickBtn.addEventListener("click", () => {
+      if (bgPickActive) finishBgPick(false); // toggle off, revert to previous
+      else startBgPick();
+    });
+  }
+
+  // Allow ESC to cancel picking and revert
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && bgPickActive) {
+      finishBgPick(false);
+    }
+  });
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -362,3 +423,35 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireUI();
   await populateCharacterSelect();
 });
+
+function startBgPick() {
+  if (bgPickActive) return;
+  const bgInput = $("bgColorInput") as HTMLInputElement | null;
+  const btn = $("bgColorPickBtn") as HTMLButtonElement | null;
+  bgPickPrevHex = bgInput?.value ?? null;
+  bgPickHoverHex = null;
+  bgPickActive = true;
+  if (btn) {
+    btn.textContent = "Picking… (ESC to cancel)";
+    btn.disabled = false;
+  }
+  if (overlayCanvas) overlayCanvas.style.cursor = "crosshair";
+}
+
+function finishBgPick(commit: boolean) {
+  if (!bgPickActive) return;
+  const bgInput = $("bgColorInput") as HTMLInputElement | null;
+  const btn = $("bgColorPickBtn") as HTMLButtonElement | null;
+
+  if (!commit && bgInput && bgPickPrevHex) {
+    // revert to original value
+    bgInput.value = bgPickPrevHex;
+  }
+  // if commit, we keep whatever hover color was last previewed
+
+  bgPickActive = false;
+  bgPickHoverHex = null;
+  bgPickPrevHex = null;
+  if (btn) btn.textContent = "Pick BG";
+  if (overlayCanvas) overlayCanvas.style.cursor = "default";
+}
