@@ -34,6 +34,11 @@ let bgPickActive = false;
 let bgPickPrevHex: string | null = null;
 let bgPickHoverHex: string | null = null;
 
+// Erase color pick state
+let erasePickActive = false;
+let erasePickPrevHex: string | null = null;
+let erasePickHoverHex: string | null = null;
+
 function $(id: string) {
   return document.getElementById(id);
 }
@@ -59,6 +64,12 @@ function setupCanvases() {
       ev.stopPropagation();
       return;
     }
+    if (erasePickActive) {
+      finishErasePick(true);
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
 
     const rect = overlayCanvas.getBoundingClientRect();
     const x = Math.floor(ev.clientX - rect.left);
@@ -79,7 +90,7 @@ function setupCanvases() {
 
   // Real-time sampling while in BG pick mode
   overlayCanvas.addEventListener("mousemove", (ev) => {
-    if (!bgPickActive) return;
+    if (!bgPickActive && !erasePickActive) return;
     const rect = overlayCanvas.getBoundingClientRect();
     const x = Math.floor(ev.clientX - rect.left);
     const y = Math.floor(ev.clientY - rect.top);
@@ -94,19 +105,30 @@ function setupCanvases() {
     try {
       const data = originalCtx.getImageData(x, y, 1, 1).data;
       const hex = rgbToHex({ r: data[0], g: data[1], b: data[2] });
-      bgPickHoverHex = hex;
-      const bgInput = $("bgColorInput") as HTMLInputElement;
-      if (bgInput) bgInput.value = hex; // preview in realtime
+      if (bgPickActive) {
+        bgPickHoverHex = hex;
+        const bgInput = $("bgColorInput") as HTMLInputElement;
+        if (bgInput) bgInput.value = hex; // preview in realtime
+      } else if (erasePickActive) {
+        erasePickHoverHex = hex;
+        const eInput = $("eraseColorInput") as HTMLInputElement;
+        if (eInput) eInput.value = hex; // preview in realtime
+      }
     } catch {
       // ignore sampling errors
     }
   });
 
   overlayCanvas.addEventListener("mouseleave", () => {
-    if (!bgPickActive) return;
-    // revert preview while outside
-    const bgInput = $("bgColorInput") as HTMLInputElement;
-    if (bgInput && bgPickPrevHex) bgInput.value = bgPickPrevHex;
+    if (bgPickActive) {
+      // revert preview while outside
+      const bgInput = $("bgColorInput") as HTMLInputElement;
+      if (bgInput && bgPickPrevHex) bgInput.value = bgPickPrevHex;
+    }
+    if (erasePickActive) {
+      const eInput = $("eraseColorInput") as HTMLInputElement;
+      if (eInput && erasePickPrevHex) eInput.value = erasePickPrevHex;
+    }
   });
 }
 
@@ -521,10 +543,28 @@ function wireUI() {
     });
   }
 
+  // Erase color: pick + apply
+  const erasePickBtn = $("eraseColorPickBtn") as HTMLButtonElement | null;
+  if (erasePickBtn) {
+    erasePickBtn.addEventListener("click", () => {
+      if (erasePickActive) finishErasePick(false);
+      else startErasePick();
+    });
+  }
+  const eraseApplyBtn = $("eraseApplyBtn") as HTMLButtonElement | null;
+  if (eraseApplyBtn) {
+    eraseApplyBtn.addEventListener("click", () => {
+      applyEraseColorNow();
+    });
+  }
+
   // Allow ESC to cancel picking and revert
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && bgPickActive) {
       finishBgPick(false);
+    }
+    if (e.key === "Escape" && erasePickActive) {
+      finishErasePick(false);
     }
   });
 }
@@ -564,5 +604,81 @@ function finishBgPick(commit: boolean) {
   bgPickHoverHex = null;
   bgPickPrevHex = null;
   if (btn) btn.textContent = "Pick BG";
+  if (overlayCanvas) overlayCanvas.style.cursor = "default";
+}
+
+// ============ Erase color pick + apply ==========
+
+function colorDistance(a: RGB, b: RGB): number {
+  const dr = a.r - b.r;
+  const dg = a.g - b.g;
+  const db = a.b - b.b;
+  return Math.sqrt(dr * dr + dg * dg + db * db);
+}
+
+function removeColorFromCanvas(color: RGB, tolerance: number) {
+  try {
+    const w = originalCanvas.width;
+    const h = originalCanvas.height;
+    if (w <= 0 || h <= 0) return;
+    const id = originalCtx.getImageData(0, 0, w, h);
+    const data = id.data;
+    const tol = Math.max(0, Math.min(200, Math.floor(tolerance)));
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      if (colorDistance({ r, g, b }, color) <= tol) {
+        data[i + 3] = 0;
+      }
+    }
+    originalCtx.putImageData(id, 0, 0);
+  } catch (err) {
+    alert("Failed to erase color. If using an external image URL, ensure it allows CORS.");
+    console.error(err);
+  }
+}
+
+function applyEraseColorNow() {
+  const eInput = $("eraseColorInput") as HTMLInputElement | null;
+  const tInput = $("eraseToleranceInput") as HTMLInputElement | null;
+  const rgb = eInput?.value ? hexToRgb(eInput.value) : null;
+  const tol = Number(tInput?.value || 12);
+  if (!rgb) return;
+  removeColorFromCanvas(rgb, tol);
+  renderSelectedThumbs();
+}
+
+function startErasePick() {
+  if (erasePickActive) return;
+  const eInput = $("eraseColorInput") as HTMLInputElement | null;
+  const btn = $("eraseColorPickBtn") as HTMLButtonElement | null;
+  erasePickPrevHex = eInput?.value ?? null;
+  erasePickHoverHex = null;
+  erasePickActive = true;
+  if (btn) {
+    btn.textContent = "Picking… (ESC to cancel)";
+    btn.disabled = false;
+  }
+  if (overlayCanvas) overlayCanvas.style.cursor = "crosshair";
+}
+
+function finishErasePick(commit: boolean) {
+  if (!erasePickActive) return;
+  const eInput = $("eraseColorInput") as HTMLInputElement | null;
+  const btn = $("eraseColorPickBtn") as HTMLButtonElement | null;
+
+  if (!commit && eInput && erasePickPrevHex) {
+    // revert to original value
+    eInput.value = erasePickPrevHex;
+  }
+
+  // On commit, immediately apply erase using chosen color and tolerance
+  if (commit) applyEraseColorNow();
+
+  erasePickActive = false;
+  erasePickHoverHex = null;
+  erasePickPrevHex = null;
+  if (btn) btn.textContent = "Pick Erase";
   if (overlayCanvas) overlayCanvas.style.cursor = "default";
 }
