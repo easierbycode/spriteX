@@ -24,6 +24,10 @@ let detectedBg: RGB | null = null;
 let detectedTolerance = 12;
 
 let characterAnimTimer: number | null = null;
+let selectionAnimTimer: number | null = null;
+let selectionFrames: string[] = [];
+let selectionFrameIndex = 0;
+let selectionPlaying = false;
 
 // BG color eyedropper state
 let bgPickActive = false;
@@ -41,9 +45,11 @@ function setupCanvases() {
   originalCtx = originalCanvas.getContext("2d", {
     willReadFrequently: true,
   }) as CanvasRenderingContext2D;
+  originalCtx.imageSmoothingEnabled = false;
   overlayCtx = overlayCanvas.getContext("2d", {
     willReadFrequently: true,
   }) as CanvasRenderingContext2D;
+  overlayCtx.imageSmoothingEnabled = false;
 
   overlayCanvas.addEventListener("click", (ev) => {
     // If eyedropper is active, finalize the current hovered color
@@ -67,6 +73,7 @@ function setupCanvases() {
       else selected.add(idx);
       drawOverlay();
       renderSelectedThumbs();
+      onSelectionChanged();
     }
   });
 
@@ -130,6 +137,9 @@ function renderSelectedThumbs() {
   if (!selected.size) {
     cont.textContent =
       'No sprites selected. Tap detected boxes on the canvas to select.';
+    // Clear preview image when nothing selected
+    const img = $("selectionPreviewImg") as HTMLImageElement | null;
+    if (img) img.src = "";
     return;
   }
 
@@ -140,6 +150,7 @@ function renderSelectedThumbs() {
     c.height = s.h;
 
     const cctx = c.getContext("2d")!;
+    cctx.imageSmoothingEnabled = false;
     cctx.drawImage(originalCanvas, s.x, s.y, s.w, s.h, 0, 0, s.w, s.h);
 
     const img = document.createElement("img");
@@ -151,6 +162,88 @@ function renderSelectedThumbs() {
 
     cont.appendChild(img);
   });
+}
+
+function getSortedSelectedIndices(): number[] {
+  const arr = [...selected];
+  arr.sort((a, b) => {
+    const sa = detected[a];
+    const sb = detected[b];
+    if (!sa || !sb) return a - b;
+    if (sa.x !== sb.x) return sa.x - sb.x;
+    return sa.y - sb.y;
+  });
+  return arr;
+}
+
+function collectSelectionFrames(): string[] {
+  if (!selected.size) return [];
+  const indices = getSortedSelectedIndices();
+  const boxes = indices.map((i) => detected[i]);
+  const bgInput = $("bgColorInput") as HTMLInputElement | null;
+  const chosenBg = bgInput?.value ? hexToRgb(bgInput.value) : detectedBg;
+  const map = extractSpriteDataURLs(originalCanvas, boxes, {
+    bgColor: chosenBg,
+    tolerance: detectedTolerance,
+  });
+  const frames: string[] = [];
+  for (let i = 0; i < boxes.length; i++) {
+    const k = `sprite_${i}`;
+    if (map[k]) frames.push(map[k]);
+  }
+  return frames;
+}
+
+function stopSelectionPreview() {
+  if (selectionAnimTimer) {
+    window.clearInterval(selectionAnimTimer);
+    selectionAnimTimer = null;
+  }
+  selectionPlaying = false;
+  const btn = $("selectionPreviewBtn") as HTMLButtonElement | null;
+  if (btn) btn.textContent = "Preview Selected";
+}
+
+function startSelectionPreview() {
+  const fpsInput = $("selectionFpsInput") as HTMLInputElement | null;
+  const fps = Math.max(1, Math.min(60, Number(fpsInput?.value || 6)));
+  const dur = Math.round(1000 / fps);
+
+  selectionFrames = collectSelectionFrames();
+  selectionFrameIndex = 0;
+
+  const img = $("selectionPreviewImg") as HTMLImageElement | null;
+  if (!selectionFrames.length || !img) {
+    stopSelectionPreview();
+    return;
+  }
+
+  img.src = selectionFrames[0];
+  if (selectionAnimTimer) window.clearInterval(selectionAnimTimer);
+  selectionAnimTimer = window.setInterval(() => {
+    selectionFrameIndex = (selectionFrameIndex + 1) % selectionFrames.length;
+    img.src = selectionFrames[selectionFrameIndex];
+  }, dur);
+
+  selectionPlaying = true;
+  const btn = $("selectionPreviewBtn") as HTMLButtonElement | null;
+  if (btn) btn.textContent = "Stop Preview";
+}
+
+function refreshSelectionPreviewFrames(keepPlaying = true) {
+  // Update frames and restart timer if we were playing
+  const img = $("selectionPreviewImg") as HTMLImageElement | null;
+  selectionFrames = collectSelectionFrames();
+  selectionFrameIndex = 0;
+  if (img) img.src = selectionFrames[0] || "";
+  if (selectionPlaying && keepPlaying) {
+    startSelectionPreview();
+  }
+}
+
+function onSelectionChanged() {
+  // Keep preview in sync with selection
+  refreshSelectionPreviewFrames(true);
 }
 
 async function loadFromURL(url: string) {
@@ -171,6 +264,7 @@ async function loadFromURL(url: string) {
   selected.clear();
   drawOverlay();
   renderSelectedThumbs();
+  onSelectionChanged();
 }
 
 async function loadFromFile(file: File) {
@@ -204,6 +298,7 @@ function runDetect(explicitBg?: RGB | null) {
 
   drawOverlay();
   renderSelectedThumbs();
+  onSelectionChanged();
 }
 
 async function saveSelectedSpritesToFirebase() {
@@ -400,6 +495,22 @@ function wireUI() {
     "click",
     loadCharacterAndPreview
   );
+
+  // Selection preview controls
+  const selBtn = $("selectionPreviewBtn") as HTMLButtonElement | null;
+  if (selBtn) {
+    selBtn.addEventListener("click", () => {
+      if (selectionPlaying) stopSelectionPreview();
+      else startSelectionPreview();
+    });
+  }
+
+  const fpsInput = $("selectionFpsInput") as HTMLInputElement | null;
+  if (fpsInput) {
+    fpsInput.addEventListener("change", () => {
+      if (selectionPlaying) startSelectionPreview(); // restart with new fps
+    });
+  }
 
   // Eyedropper: pick BG color from canvas in realtime
   const pickBtn = $("bgColorPickBtn") as HTMLButtonElement | null;

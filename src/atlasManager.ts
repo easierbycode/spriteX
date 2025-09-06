@@ -555,6 +555,7 @@ export async function createAtlasPng(
 ): Promise<string> {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
+  ctx.imageSmoothingEnabled = false;
   canvas.width = atlasJson.meta.size.w;
   canvas.height = atlasJson.meta.size.h;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -627,6 +628,7 @@ export function extractSpriteDataURLs(
     c.width = spr.w;
     c.height = spr.h;
     const cctx = c.getContext("2d", { willReadFrequently: true })!;
+    cctx.imageSmoothingEnabled = false;
     cctx.drawImage(
       originalCanvas,
       spr.x,
@@ -733,6 +735,7 @@ export async function loadCharacterPreviewFromAtlas(
     c.width = w;
     c.height = h;
     const cctx = c.getContext("2d")!;
+    cctx.imageSmoothingEnabled = false;
     cctx.drawImage(atlasImg, x, y, w, h, 0, 0, w, h);
     frames.push(c.toDataURL("image/png"));
   }
