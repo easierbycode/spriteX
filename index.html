@@ -6,23 +6,105 @@
     <title>SpriteXtractor</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
+      :root {
+        --bg-color: #f5f6f8;
+        --text-color: #222;
+        --panel-bg: #fff;
+        --panel-border: #ddd;
+        --input-bg: #fff;
+        --input-border: #bbb;
+        --btn-bg: #0d6efd;
+        --btn-text: #fff;
+        --btn-disabled-bg: #9bbcf9;
+        --h1-color: #0b5ed7;
+        --h1-shadow: rgba(0,0,0,0.2);
+        --tip-text: #555;
+        --link-color: #0b5ed7;
+      }
+      body.dark-mode {
+        --bg-color: #1a1a1a;
+        --text-color: #eee;
+        --panel-bg: #2a2a2a;
+        --panel-border: #444;
+        --input-bg: #3a3a3a;
+        --input-border: #666;
+        --btn-bg: #0d6efd;
+        --btn-text: #fff;
+        --btn-disabled-bg: #0a58ca;
+        --h1-color: #3b82f6;
+        --h1-shadow: rgba(0,0,0,0.4);
+        --tip-text: #999;
+        --link-color: #3b82f6;
+      }
       body {
         font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
         margin: 0;
         padding: 16px;
-        background: #f5f6f8;
-        color: #222;
+        background: var(--bg-color);
+        color: var(--text-color);
+        transition: background .3s ease, color .3s ease;
+      }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
       }
       h1 {
-        margin: 0 0 12px;
-        color: #0b5ed7;
+        margin: 0;
+        color: var(--h1-color);
+        text-shadow: 1px 1px 1px var(--h1-shadow);
+      }
+      .theme-switch-wrapper {
+        display: flex;
+        align-items: center;
+      }
+      .theme-switch {
+        position: relative;
+        display: inline-block;
+        width: 50px;
+        height: 24px;
+      }
+      .theme-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+      .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #ccc;
+        transition: .4s;
+        border-radius: 24px;
+      }
+      .slider:before {
+        position: absolute;
+        content: "";
+        height: 20px;
+        width: 20px;
+        left: 2px;
+        bottom: 2px;
+        background-color: white;
+        transition: .4s;
+        border-radius: 50%;
+      }
+      input:checked + .slider {
+        background-color: #0d6efd;
+      }
+      input:checked + .slider:before {
+        transform: translateX(26px);
       }
       .panel {
-        background: #fff;
-        border: 1px solid #ddd;
+        background: var(--panel-bg);
+        border: 1px solid var(--panel-border);
         border-radius: 8px;
         padding: 12px;
         margin-bottom: 16px;
+        transition: background .3s ease, border .3s ease;
       }
       .row {
         display: flex;
@@ -33,7 +115,7 @@
       .canv-wrap {
         position: relative;
         display: inline-block;
-        border: 1px solid #ccc;
+        border: 1px solid var(--panel-border);
         background-color: #e0e0e0;
         background-image: linear-gradient(
             45deg,
@@ -127,25 +209,35 @@
         border: 2px solid transparent;
       }
       #atlasFramesContainer img.selected {
-        border-color: #0d6efd;
+        border-color: var(--link-color);
+      }
+      .preview-img {
+        min-height: 128px;
+        object-fit: contain;
+        background-color: #e0e0e0;
+        background-image: linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc), linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc);
+        background-size: 10px 10px;
+        background-position: 0 0, 5px 5px;
       }
       .btn {
         padding: 8px 12px;
-        background: #0d6efd;
+        background: var(--btn-bg);
         border: none;
-        color: #fff;
+        color: var(--btn-text);
         border-radius: 4px;
         cursor: pointer;
       }
       .btn:disabled {
-        background: #9bbcf9;
+        background: var(--btn-disabled-bg);
         cursor: not-allowed;
       }
       input[type="text"],
       input[type="url"],
       select {
         padding: 6px 8px;
-        border: 1px solid #bbb;
+        border: 1px solid var(--input-border);
+        background: var(--input-bg);
+        color: var(--text-color);
         border-radius: 4px;
         min-width: 260px;
       }
@@ -153,7 +245,7 @@
         width: 40px;
         height: 32px;
         padding: 0;
-        border: 1px solid #bbb;
+        border: 1px solid var(--input-border);
         border-radius: 4px;
       }
       .grid-2 {
@@ -173,7 +265,13 @@
     </style>
   </head>
   <body>
-    <h1>SpriteXtractor</h1>
+    <div class="header">
+      <h1>SpriteXtractor</h1>
+      <label class="theme-switch">
+        <input type="checkbox" id="theme-toggle">
+        <span class="slider round"></span>
+      </label>
+    </div>
 
     <div class="panel">
       <div class="row">
@@ -193,7 +291,7 @@
         <button id="eraseColorPickBtn" class="btn" title="Pick a color to erase from canvas">Pick Erase</button>
         <button id="eraseApplyBtn" class="btn" title="Remove pixels matching the erase color within tolerance">Remove Color</button>
       </div>
-      <div style="margin-top: 6px; color: #555; font-size: 0.95em">
+      <div style="margin-top: 6px; color: var(--tip-text); font-size: 0.95em">
         Tip: After detection, tap sprite boxes on the canvas to select or
         deselect.
       </div>
@@ -230,8 +328,9 @@
         <div class="row" style="margin-top: 8px">
           <img
             id="selectionPreviewImg"
+            class="preview-img"
             alt="Selected Animation Preview"
-            style="width: 128px; height: auto; border: 1px solid #ccc"
+            style="width: 128px; border: 1px solid var(--panel-border)"
           />
         </div>
       </div>
@@ -276,13 +375,13 @@
           <img
             id="atlasPreviewImg"
             alt="Atlas Preview"
-            style="max-width: 100%; border: 1px solid #ccc"
+            style="max-width: 100%; border: 1px solid var(--panel-border)"
           />
         </div>
         <div>Atlases saved as atlases/{name} with json + png (DataURL).</div>
 
         <div class="subtitle" style="margin-top: 12px">Atlas Frames</div>
-        <div id="atlasFramesContainer" class="row" style="padding: 4px; border: 1px solid #ddd; min-height: 50px;">
+        <div id="atlasFramesContainer" class="row" style="padding: 4px; border: 1px solid var(--panel-border); min-height: 50px;">
           Atlas not built yet.
         </div>
 
@@ -302,8 +401,9 @@
         <div class="row" style="margin-top: 8px">
           <img
             id="atlasAnimPreviewImg"
+            class="preview-img"
             alt="Atlas Animation Preview"
-            style="width: 128px; height: auto; border: 1px solid #ccc"
+            style="width: 128px; border: 1px solid var(--panel-border)"
           />
         </div>
       </div>
@@ -321,8 +421,9 @@
       <div class="row" style="margin-top: 8px">
         <img
           id="characterPreviewImg"
+          class="preview-img"
           alt="Character Preview"
-          style="width: 128px; height: auto; border: 1px solid #ccc"
+          style="width: 128px; border: 1px solid var(--panel-border)"
         />
       </div>
     </div>

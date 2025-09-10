@@ -805,8 +805,45 @@ function wireUI() {
   });
 }
 
+function setupTheme() {
+  const toggle = document.getElementById('theme-toggle') as HTMLInputElement;
+  if (!toggle) return;
+
+  const applyTheme = (isDark: boolean) => {
+    document.body.classList.toggle('dark-mode', isDark);
+    toggle.checked = isDark;
+  };
+
+  // Check for saved preference
+  const savedTheme = localStorage.getItem('theme');
+  if (savedTheme === 'dark') {
+    applyTheme(true);
+  } else if (savedTheme === 'light') {
+    applyTheme(false);
+  } else {
+    // Fallback to system preference if no explicit choice is saved
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    applyTheme(prefersDark);
+  }
+
+  toggle.addEventListener('change', () => {
+    const isDark = toggle.checked;
+    applyTheme(isDark);
+    localStorage.setItem('theme', isDark ? 'dark' : 'light');
+  });
+
+  // Listen for system theme changes
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+    // Only apply if no explicit user choice is stored
+    if (!localStorage.getItem('theme')) {
+      applyTheme(e.matches);
+    }
+  });
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   setupCanvases();
+  setupTheme();
   wireUI();
   await populateCharacterSelect();
   await populateAtlasSelect();
