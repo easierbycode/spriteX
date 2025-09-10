@@ -88,6 +88,19 @@ export async function fetchAllCharacters(): Promise<
   }
 }
 
+export async function fetchAllAtlases(): Promise<Record<string, AtlasData>> {
+    const db = getDB();
+    try {
+        const snapshot = await get(ref(db, "atlases"));
+        return snapshot.exists()
+        ? (snapshot.val() as Record<string, AtlasData>)
+        : {};
+    } catch (error) {
+        console.error("Error fetching atlases:", error);
+        return {};
+    }
+}
+
 export async function fetchCharacter(
   characterId: string
 ): Promise<CharacterData | null> {
@@ -764,6 +777,7 @@ export default {
   fetchAllCharacters,
   fetchCharacter,
   fetchAtlas,
+  fetchAllAtlases,
   fetchAllSprites,
   saveCharacter,
   saveAtlas,

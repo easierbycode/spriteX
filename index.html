@@ -94,10 +94,40 @@
       /* Ensure preview images remain crisp when scaled */
       #characterPreviewImg,
       #selectionPreviewImg,
-      #atlasPreviewImg {
+      #atlasPreviewImg,
+      #atlasAnimPreviewImg {
         image-rendering: pixelated;
         image-rendering: crisp-edges;
         -ms-interpolation-mode: nearest-neighbor;
+      }
+      #atlasFramesContainer img {
+        background-color: #e0e0e0;
+        background-image: linear-gradient(
+            45deg,
+            #ccc 25%,
+            transparent 25%,
+            transparent 75%,
+            #ccc 75%,
+            #ccc
+          ),
+          linear-gradient(
+            45deg,
+            #ccc 25%,
+            transparent 25%,
+            transparent 75%,
+            #ccc 75%,
+            #ccc
+          );
+        background-size: 10px 10px;
+        background-position: 0 0, 5px 5px;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+        -ms-interpolation-mode: nearest-neighbor; /* IE fallback */
+        cursor: pointer;
+        border: 2px solid transparent;
+      }
+      #atlasFramesContainer img.selected {
+        border-color: #0d6efd;
       }
       .btn {
         padding: 8px 12px;
@@ -225,6 +255,12 @@
 
       <div>
         <div class="subtitle">Atlas Builder</div>
+        <div class="row" style="margin-bottom: 8px;">
+            <select id="atlasSelect">
+              <option value="">-- Select an atlas --</option>
+            </select>
+            <button id="loadAtlasBtn" class="btn">Load Atlas</button>
+        </div>
         <div class="row">
           <input
             id="atlasNameInput"
@@ -244,6 +280,32 @@
           />
         </div>
         <div>Atlases saved as atlases/{name} with json + png (DataURL).</div>
+
+        <div class="subtitle" style="margin-top: 12px">Atlas Frames</div>
+        <div id="atlasFramesContainer" class="row" style="padding: 4px; border: 1px solid #ddd; min-height: 50px;">
+          Atlas not built yet.
+        </div>
+
+        <!-- Atlas Animation Preview Controls -->
+        <div class="row" style="margin-top: 10px">
+          <label for="atlasFpsInput">Preview FPS</label>
+          <input
+            id="atlasFpsInput"
+            type="number"
+            value="6"
+            min="1"
+            max="60"
+            style="width: 72px"
+          />
+          <button id="atlasPreviewBtn" class="btn">Preview Atlas Anim</button>
+        </div>
+        <div class="row" style="margin-top: 8px">
+          <img
+            id="atlasAnimPreviewImg"
+            alt="Atlas Animation Preview"
+            style="width: 128px; height: auto; border: 1px solid #ccc"
+          />
+        </div>
       </div>
     </div>
 

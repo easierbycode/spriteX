@@ -7,6 +7,8 @@ import {
   saveAtlas,
   loadCharacterPreviewFromAtlas,
   fetchAllCharacters,
+  fetchAllAtlases,
+  fetchAtlas,
   rgbToHex,
   hexToRgb,
   type DetectedSprite,
@@ -28,6 +30,13 @@ let selectionAnimTimer: number | null = null;
 let selectionFrames: string[] = [];
 let selectionFrameIndex = 0;
 let selectionPlaying = false;
+
+// Atlas animation preview state
+let atlasAnimTimer: number | null = null;
+let atlasFrames: string[] = []; // All frames extracted from atlas
+let atlasSelectedFrameIndices = new Set<number>();
+let atlasAnimFrameIndex = 0;
+let atlasAnimPlaying = false;
 
 // BG color eyedropper state
 let bgPickActive = false;
@@ -323,6 +332,27 @@ function runDetect(explicitBg?: RGB | null) {
   onSelectionChanged();
 }
 
+async function extractFramesFromAtlas(
+  atlasImg: HTMLImageElement,
+  atlasJson: any
+): Promise<string[]> {
+  const frames: string[] = [];
+  const frameData = atlasJson.frames || {};
+
+  for (const key in frameData) {
+    const frame = frameData[key].frame;
+    const c = document.createElement("canvas");
+    c.width = frame.w;
+    c.height = frame.h;
+    const ctx = c.getContext("2d")!;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(atlasImg, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
+    frames.push(c.toDataURL("image/png"));
+  }
+
+  return frames;
+}
+
 async function saveSelectedSpritesToFirebase() {
   if (!selected.size) {
     alert("No sprites selected.");
@@ -373,6 +403,60 @@ async function buildAtlasAndPreview() {
   (img as any)._atlasDataURL = dataURL;
 
   $("saveAtlasFirebaseBtn")!.removeAttribute("disabled");
+
+  // --- New logic for atlas frame preview ---
+  stopAtlasPreview();
+  atlasSelectedFrameIndices.clear();
+
+  await new Promise<void>(resolve => {
+    const atlasImg = new Image();
+    atlasImg.onload = async () => {
+      atlasFrames = await extractFramesFromAtlas(atlasImg, json);
+      renderAtlasFrames();
+      resolve();
+    };
+    atlasImg.onerror = () => {
+      console.error("Failed to load atlas image for preview");
+      resolve();
+    }
+    atlasImg.src = dataURL;
+  });
+}
+
+function renderAtlasFrames() {
+  const cont = $("atlasFramesContainer") as HTMLDivElement;
+  cont.innerHTML = "";
+
+  if (!atlasFrames.length) {
+    cont.textContent = "No frames found in atlas.";
+    return;
+  }
+
+  atlasFrames.forEach((frameDataURL, index) => {
+    const img = document.createElement("img");
+    img.src = frameDataURL;
+    img.style.width = "64px";
+    img.style.height = "auto";
+    img.style.margin = "4px";
+    img.dataset.frameIndex = String(index);
+
+    if (atlasSelectedFrameIndices.has(index)) {
+      img.classList.add("selected");
+    }
+
+    img.addEventListener("click", () => {
+      if (atlasSelectedFrameIndices.has(index)) {
+        atlasSelectedFrameIndices.delete(index);
+        img.classList.remove("selected");
+      } else {
+        atlasSelectedFrameIndices.add(index);
+        img.classList.add("selected");
+      }
+      refreshAtlasPreviewFrames(false); // Update preview but don't start playing
+    });
+
+    cont.appendChild(img);
+  });
 }
 
 async function saveAtlasToFirebase() {
@@ -390,6 +474,57 @@ async function saveAtlasToFirebase() {
 
   await saveAtlas(atlasName, { json, png: dataURL });
   alert(`Atlas "${atlasName}" saved to RTDB (atlases/${atlasName}).`);
+  await populateAtlasSelect(); // Refresh atlas list
+}
+
+function stopAtlasPreview() {
+  if (atlasAnimTimer) {
+    window.clearInterval(atlasAnimTimer);
+    atlasAnimTimer = null;
+  }
+  atlasAnimPlaying = false;
+  const btn = $("atlasPreviewBtn") as HTMLButtonElement | null;
+  if (btn) btn.textContent = "Preview Atlas Anim";
+}
+
+function startAtlasPreview() {
+  const fpsInput = $("atlasFpsInput") as HTMLInputElement | null;
+  const fps = Math.max(1, Math.min(60, Number(fpsInput?.value || 6)));
+  const dur = Math.round(1000 / fps);
+
+  const selectedFrames = [...atlasSelectedFrameIndices].sort((a,b) => a-b).map(i => atlasFrames[i]);
+
+  atlasAnimFrameIndex = 0;
+
+  const img = $("atlasAnimPreviewImg") as HTMLImageElement | null;
+  if (!selectedFrames.length || !img) {
+    stopAtlasPreview();
+    return;
+  }
+
+  img.src = selectedFrames[0];
+  if (atlasAnimTimer) window.clearInterval(atlasAnimTimer);
+  atlasAnimTimer = window.setInterval(() => {
+    atlasAnimFrameIndex = (atlasAnimFrameIndex + 1) % selectedFrames.length;
+    img.src = selectedFrames[atlasAnimFrameIndex];
+  }, dur);
+
+  atlasAnimPlaying = true;
+  const btn = $("atlasPreviewBtn") as HTMLButtonElement | null;
+  if (btn) btn.textContent = "Stop Preview";
+}
+
+function refreshAtlasPreviewFrames(keepPlaying = true) {
+  const img = $("atlasAnimPreviewImg") as HTMLImageElement | null;
+  const selectedFrames = [...atlasSelectedFrameIndices].sort((a,b) => a-b).map(i => atlasFrames[i]);
+  atlasAnimFrameIndex = 0;
+  if (img) img.src = selectedFrames[0] || "";
+
+  if (atlasAnimPlaying && keepPlaying) {
+    startAtlasPreview();
+  } else if (!keepPlaying) {
+    stopAtlasPreview();
+  }
 }
 
 async function populateCharacterSelect() {
@@ -432,6 +567,86 @@ async function populateCharacterSelect() {
     select.disabled = true;
     console.error(err);
   }
+}
+
+async function populateAtlasSelect() {
+    const select = $("atlasSelect") as HTMLSelectElement;
+    if (!select) return;
+
+    select.innerHTML = "";
+    const loadingOpt = document.createElement("option");
+    loadingOpt.value = "";
+    loadingOpt.textContent = "Loading atlases...";
+    select.appendChild(loadingOpt);
+    select.disabled = true;
+
+    try {
+        const atlases = await fetchAllAtlases();
+        select.innerHTML = "";
+
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "-- Select an atlas --";
+        select.appendChild(placeholder);
+
+        Object.keys(atlases).forEach(id => {
+            const opt = document.createElement("option");
+            opt.value = id;
+            opt.textContent = id;
+            select.appendChild(opt);
+        });
+
+        select.disabled = false;
+    } catch (err) {
+        select.innerHTML = "";
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "Failed to load atlases";
+        select.appendChild(opt);
+        select.disabled = true;
+        console.error(err);
+    }
+}
+
+async function loadAtlasAndPreview() {
+    const select = $("atlasSelect") as HTMLSelectElement;
+    const id = select?.value || "";
+    if (!id) {
+        alert("Select an atlas.");
+        return;
+    }
+
+    const atlasData = await fetchAtlas(id);
+    if (!atlasData) {
+        alert("Failed to load atlas data.");
+        return;
+    }
+
+    const { png: dataURL, json } = atlasData;
+
+    const img = $("atlasPreviewImg") as HTMLImageElement;
+    img.src = dataURL;
+
+    (img as any)._atlasJson = json;
+    (img as any)._atlasDataURL = dataURL;
+
+    // This part is the same as in buildAtlasAndPreview
+    stopAtlasPreview();
+    atlasSelectedFrameIndices.clear();
+
+    await new Promise<void>(resolve => {
+        const atlasImg = new Image();
+        atlasImg.onload = async () => {
+            atlasFrames = await extractFramesFromAtlas(atlasImg, json);
+            renderAtlasFrames();
+            resolve();
+        };
+        atlasImg.onerror = () => {
+            console.error("Failed to load atlas image for preview");
+            resolve();
+        }
+        atlasImg.src = dataURL;
+    });
 }
 
 async function loadCharacterAndPreview() {
@@ -518,6 +733,11 @@ function wireUI() {
     loadCharacterAndPreview
   );
 
+  ($("loadAtlasBtn") as HTMLButtonElement).addEventListener(
+    "click",
+    loadAtlasAndPreview
+  );
+
   // Selection preview controls
   const selBtn = $("selectionPreviewBtn") as HTMLButtonElement | null;
   if (selBtn) {
@@ -531,6 +751,22 @@ function wireUI() {
   if (fpsInput) {
     fpsInput.addEventListener("change", () => {
       if (selectionPlaying) startSelectionPreview(); // restart with new fps
+    });
+  }
+
+  // Atlas preview controls
+  const atlasBtn = $("atlasPreviewBtn") as HTMLButtonElement | null;
+  if (atlasBtn) {
+    atlasBtn.addEventListener("click", () => {
+      if (atlasAnimPlaying) stopAtlasPreview();
+      else startAtlasPreview();
+    });
+  }
+
+  const atlasFpsInput = $("atlasFpsInput") as HTMLInputElement | null;
+  if (atlasFpsInput) {
+    atlasFpsInput.addEventListener("change", () => {
+      if (atlasAnimPlaying) startAtlasPreview(); // restart with new fps
     });
   }
 
@@ -573,6 +809,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupCanvases();
   wireUI();
   await populateCharacterSelect();
+  await populateAtlasSelect();
 });
 
 function startBgPick() {
