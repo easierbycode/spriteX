@@ -937,7 +937,7 @@ function setupHoldToDownload(element: HTMLElement, defaultFilename: string) {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
       } else {
         // Optional: notify user that there's nothing to download
         console.log("No GIF blob available for download yet.");
