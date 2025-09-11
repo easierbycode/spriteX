@@ -555,7 +555,14 @@ async function generateAtlasWebp(frames: string[], fps: number) {
       loopCount: 0,
       bgColor: 0,
       frames: imageDatas.map(imageData => {
-        const rgba = new Uint32Array(imageData.data.buffer);
+        const rgba = new Uint32Array(imageData.width * imageData.height);
+        for (let i = 0; i < rgba.length; i++) {
+          const r = imageData.data[i * 4 + 0];
+          const g = imageData.data[i * 4 + 1];
+          const b = imageData.data[i * 4 + 2];
+          const a = imageData.data[i * 4 + 3];
+          rgba[i] = (a << 24) | (b << 16) | (g << 8) | r;
+        }
         return {
           duration: 1000 / fps,
           isKeyframe: true,
