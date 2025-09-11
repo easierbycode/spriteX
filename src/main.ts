@@ -1,4 +1,6 @@
 // src/main.ts
+declare const GIF: any;
+
 import {
   smartDetectSprites,
   extractSpriteDataURLs,
@@ -502,6 +504,10 @@ function startAtlasPreview() {
     return;
   }
 
+  // --- GIF generation ---
+  generateAtlasGif(selectedFrames, fps);
+  // --- End GIF generation ---
+
   img.src = selectedFrames[0];
   if (atlasAnimTimer) window.clearInterval(atlasAnimTimer);
   atlasAnimTimer = window.setInterval(() => {
@@ -512,6 +518,45 @@ function startAtlasPreview() {
   atlasAnimPlaying = true;
   const btn = $("atlasPreviewBtn") as HTMLButtonElement | null;
   if (btn) btn.textContent = "Stop Preview";
+}
+
+function generateAtlasGif(frames: string[], fps: number) {
+  if (!frames.length) return;
+
+  const img = $("atlasAnimPreviewImg") as any;
+  if (img) img._gifBlob = null; // Clear previous blob
+
+  const firstFrame = new Image();
+  firstFrame.src = frames[0];
+  firstFrame.onload = () => {
+    const gif = new GIF({
+      workers: 2,
+      quality: 10,
+      width: firstFrame.width,
+      height: firstFrame.height,
+      workerScript: 'https://cdn.jsdelivr.net/npm/gif.js.optimized@1.0.1/dist/gif.worker.js'
+    });
+
+    const framePromises = frames.map(frameSrc => {
+      return new Promise<HTMLImageElement>(resolve => {
+        const frameImg = new Image();
+        frameImg.onload = () => resolve(frameImg);
+        frameImg.src = frameSrc;
+      });
+    });
+
+    Promise.all(framePromises).then(imageElements => {
+      imageElements.forEach(imageElement => {
+        gif.addFrame(imageElement, { delay: 1000 / fps });
+      });
+
+      gif.on('finished', (blob: Blob) => {
+        if (img) img._gifBlob = blob;
+      });
+
+      gif.render();
+    });
+  };
 }
 
 function refreshAtlasPreviewFrames(keepPlaying = true) {
@@ -763,6 +808,11 @@ function wireUI() {
     });
   }
 
+  const atlasAnimPreviewImg = $("atlasAnimPreviewImg") as HTMLImageElement | null;
+  if (atlasAnimPreviewImg) {
+    setupHoldToDownload(atlasAnimPreviewImg, 'atlas-animation.gif');
+  }
+
   const atlasFpsInput = $("atlasFpsInput") as HTMLInputElement | null;
   if (atlasFpsInput) {
     atlasFpsInput.addEventListener("change", () => {
@@ -848,6 +898,47 @@ document.addEventListener("DOMContentLoaded", async () => {
   await populateCharacterSelect();
   await populateAtlasSelect();
 });
+
+function setupHoldToDownload(element: HTMLElement, defaultFilename: string) {
+  let pressTimer: number | null = null;
+
+  const startPress = (e: MouseEvent | TouchEvent) => {
+    // Don't interfere with right-clicks
+    if (e instanceof MouseEvent && e.button !== 0) return;
+
+    pressTimer = window.setTimeout(() => {
+      const blob = (element as any)._gifBlob as Blob | null;
+      if (blob) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = defaultFilename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        // Optional: notify user that there's nothing to download
+        console.log("No GIF blob available for download yet.");
+      }
+      clearPress();
+    }, 800); // 800ms for a "long press"
+  };
+
+  const clearPress = () => {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  };
+
+  element.addEventListener("mousedown", startPress as EventListener);
+  element.addEventListener("touchstart", startPress as EventListener);
+  element.addEventListener("mouseup", clearPress);
+  element.addEventListener("mouseleave", clearPress);
+  element.addEventListener("touchend", clearPress);
+  element.addEventListener("touchcancel", clearPress);
+}
 
 function startBgPick() {
   if (bgPickActive) return;
