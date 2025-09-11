@@ -1,5 +1,5 @@
 // src/main.ts
-import WebPXMux from "webpxmux/dist/webpxmux";
+declare const GIF: any;
 import {
   smartDetectSprites,
   extractSpriteDataURLs,
@@ -503,9 +503,9 @@ function startAtlasPreview() {
     return;
   }
 
-  // --- WebP generation ---
-  generateAtlasWebp(selectedFrames, fps);
-  // --- End WebP generation ---
+  // --- GIF generation ---
+  generateAtlasGif(selectedFrames, fps);
+  // --- End GIF generation ---
 
   img.src = selectedFrames[0];
   if (atlasAnimTimer) window.clearInterval(atlasAnimTimer);
@@ -519,65 +519,62 @@ function startAtlasPreview() {
   if (btn) btn.textContent = "Stop Preview";
 }
 
-const xMux = WebPXMux("webpxmux.wasm");
-
-async function generateAtlasWebp(frames: string[], fps: number) {
+function generateAtlasGif(frames: string[], fps: number) {
   if (!frames.length) return;
 
   const img = $("atlasAnimPreviewImg") as any;
-  if (img) img._webpBlob = null;
+  if (img) img._gifBlob = null;
 
-  await xMux.waitRuntime();
-
-  const framePromises = frames.map(frameSrc => {
-    return new Promise<ImageData>(resolve => {
-      const frameImg = new Image();
-      frameImg.onload = () => {
-        const canvas = document.createElement("canvas");
-        canvas.width = frameImg.width;
-        canvas.height = frameImg.height;
-        const ctx = canvas.getContext("2d")!;
-        ctx.drawImage(frameImg, 0, 0);
-        resolve(ctx.getImageData(0, 0, frameImg.width, frameImg.height));
-      };
-      frameImg.src = frameSrc;
-    });
-  });
-
-  const imageDatas = await Promise.all(framePromises);
-
-  if (imageDatas.length > 0) {
-    const firstFrame = imageDatas[0];
-    const webpFrames = {
+  const firstFrame = new Image();
+  firstFrame.src = frames[0];
+  firstFrame.onload = () => {
+    const gif = new GIF({
+      workers: 2,
+      quality: 10,
       width: firstFrame.width,
       height: firstFrame.height,
-      frameCount: imageDatas.length,
-      loopCount: 0,
-      bgColor: 0,
-      frames: imageDatas.map(imageData => {
-        const rgba = new Uint32Array(imageData.width * imageData.height);
-        for (let i = 0; i < rgba.length; i++) {
-          const r = imageData.data[i * 4 + 0];
-          const g = imageData.data[i * 4 + 1];
-          const b = imageData.data[i * 4 + 2];
-          const a = imageData.data[i * 4 + 3];
-          rgba[i] = (a << 24) | (b << 16) | (g << 8) | r;
-        }
-        return {
-          duration: 1000 / fps,
-          isKeyframe: true,
-          rgba: rgba,
+      workerScript: 'gif.worker.js',
+      transparent: 0xFF00FF,
+    });
+
+    const framePromises = frames.map(frameSrc => {
+      return new Promise<HTMLCanvasElement>(resolve => {
+        const frameImg = new Image();
+        frameImg.onload = () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = frameImg.width;
+          canvas.height = frameImg.height;
+          const ctx = canvas.getContext("2d")!;
+          ctx.drawImage(frameImg, 0, 0);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const data = imageData.data;
+          for (let i = 0; i < data.length; i += 4) {
+            if (data[i + 3] < 128) {
+              data[i] = 255;
+              data[i + 1] = 0;
+              data[i + 2] = 255;
+              data[i + 3] = 255;
+            }
+          }
+          ctx.putImageData(imageData, 0, 0);
+          resolve(canvas);
         };
-      }),
-    };
+        frameImg.src = frameSrc;
+      });
+    });
 
-    const webpData = await xMux.encodeFrames(webpFrames);
+    Promise.all(framePromises).then(canvases => {
+      canvases.forEach(canvas => {
+        gif.addFrame(canvas, { delay: 1000 / fps });
+      });
 
-    if (webpData) {
-      const blob = new Blob([webpData], { type: "image/webp" });
-      if (img) img._webpBlob = blob;
-    }
-  }
+      gif.on('finished', (blob: Blob) => {
+        if (img) img._gifBlob = blob;
+      });
+
+      gif.render();
+    });
+  };
 }
 
 function refreshAtlasPreviewFrames(keepPlaying = true) {
@@ -831,7 +828,7 @@ function wireUI() {
 
   const atlasAnimPreviewImg = $("atlasAnimPreviewImg") as HTMLImageElement | null;
   if (atlasAnimPreviewImg) {
-    setupHoldToDownload(atlasAnimPreviewImg, 'atlas-animation.webp');
+    setupHoldToDownload(atlasAnimPreviewImg, 'atlas-animation.gif');
   }
 
   const atlasFpsInput = $("atlasFpsInput") as HTMLInputElement | null;
@@ -928,7 +925,7 @@ function setupHoldToDownload(element: HTMLElement, defaultFilename: string) {
     if (e instanceof MouseEvent && e.button !== 0) return;
 
     pressTimer = window.setTimeout(() => {
-      const blob = (element as any)._webpBlob as Blob | null;
+      const blob = (element as any)._gifBlob as Blob | null;
       if (blob) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
