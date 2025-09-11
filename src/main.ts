@@ -534,7 +534,7 @@ function generateAtlasGif(frames: string[], fps: number) {
       quality: 10,
       width: firstFrame.width,
       height: firstFrame.height,
-      workerScript: 'https://cdn.jsdelivr.net/npm/gif.js.optimized@1.0.1/dist/gif.worker.js'
+      workerScript: 'gif.worker.js'
     });
 
     const framePromises = frames.map(frameSrc => {
