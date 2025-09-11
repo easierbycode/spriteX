@@ -525,14 +525,16 @@ function generateAtlasGif(frames: string[], fps: number) {
   const img = $("atlasAnimPreviewImg") as any;
   if (img) img._gifBlob = null;
 
+  const scale = Number(($("gifScaleInput") as HTMLSelectElement)?.value || 1);
+
   const firstFrame = new Image();
   firstFrame.src = frames[0];
   firstFrame.onload = () => {
     const gif = new GIF({
       workers: 2,
       quality: 10,
-      width: firstFrame.width,
-      height: firstFrame.height,
+      width: firstFrame.width * scale,
+      height: firstFrame.height * scale,
       workerScript: 'gif.worker.js',
       transparent: 0xFF00FF,
     });
@@ -542,10 +544,11 @@ function generateAtlasGif(frames: string[], fps: number) {
         const frameImg = new Image();
         frameImg.onload = () => {
           const canvas = document.createElement("canvas");
-          canvas.width = frameImg.width;
-          canvas.height = frameImg.height;
+          canvas.width = frameImg.width * scale;
+          canvas.height = frameImg.height * scale;
           const ctx = canvas.getContext("2d")!;
-          ctx.drawImage(frameImg, 0, 0);
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(frameImg, 0, 0, frameImg.width, frameImg.height, 0, 0, canvas.width, canvas.height);
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const data = imageData.data;
           for (let i = 0; i < data.length; i += 4) {
