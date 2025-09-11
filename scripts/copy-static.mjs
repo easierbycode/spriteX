@@ -14,8 +14,8 @@ async function main() {
   await ensureDir(dist);
   await copyFile(resolve(root, "index.html"), resolve(dist, "index.html"));
   await copyFile(
-    resolve(root, "src/vendor/gif.worker.js"),
-    resolve(dist, "gif.worker.js")
+    resolve(root, "src/vendor/webpxmux.wasm"),
+    resolve(dist, "webpxmux.wasm")
   );
   await writeFile(
     resolve(dist, "404.html"),
