@@ -13,6 +13,10 @@ async function ensureDir(p) {
 async function main() {
   await ensureDir(dist);
   await copyFile(resolve(root, "index.html"), resolve(dist, "index.html"));
+  await copyFile(
+    resolve(root, "src/vendor/gif.worker.js"),
+    resolve(dist, "gif.worker.js")
+  );
   await writeFile(
     resolve(dist, "404.html"),
     '<meta http-equiv="refresh" content="0; url=./" />'
