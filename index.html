@@ -217,13 +217,22 @@
       #atlasFramesContainer img.selected {
         border-color: var(--link-color);
       }
-      .preview-img {
-        min-height: 128px;
-        object-fit: contain;
+      .preview-container {
+        width: 128px;
+        height: 128px;
+        border: 1px solid var(--panel-border);
+        display: flex;
+        align-items: center;
+        justify-content: center;
         background-color: #e0e0e0;
         background-image: linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc), linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc);
         background-size: 10px 10px;
         background-position: 0 0, 5px 5px;
+      }
+      .preview-img {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
       }
       .btn {
         padding: 8px 12px;
@@ -335,12 +344,13 @@
           <button id="selectionPreviewBtn" class="btn">Preview Selected</button>
         </div>
         <div class="row" style="margin-top: 8px">
-          <img
-            id="selectionPreviewImg"
-            class="preview-img"
-            alt="Selected Animation Preview"
-            style="width: 128px; border: 1px solid var(--panel-border)"
-          />
+          <div class="preview-container">
+            <img
+              id="selectionPreviewImg"
+              class="preview-img"
+              alt="Selected Animation Preview"
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -416,12 +426,13 @@
           </button>
         </div>
         <div class="row" style="margin-top: 8px">
-          <img
-            id="atlasAnimPreviewImg"
-            class="preview-img"
-            alt="Atlas Animation Preview"
-            style="width: 128px; border: 1px solid var(--panel-border)"
-          />
+          <div class="preview-container">
+            <img
+              id="atlasAnimPreviewImg"
+              class="preview-img"
+              alt="Atlas Animation Preview"
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -436,12 +447,13 @@
         <div>FPS: <span id="frameRateSpan">-</span></div>
       </div>
       <div class="row" style="margin-top: 8px">
-        <img
-          id="characterPreviewImg"
-          class="preview-img"
-          alt="Character Preview"
-          style="width: 128px; border: 1px solid var(--panel-border)"
-        />
+          <div class="preview-container">
+            <img
+              id="characterPreviewImg"
+              class="preview-img"
+              alt="Character Preview"
+            />
+          </div>
       </div>
     </div>
 
