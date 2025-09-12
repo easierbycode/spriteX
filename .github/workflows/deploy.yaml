@@ -86,7 +86,7 @@ jobs:
 
       - name: Create Cordova project
         run: |
-          cordova create cordova io.spritex.app SpriteXtractor
+          cordova create cordova io.spritex.app SpriteXtract
           rm -rf cordova/www/*
           cp -r dist/* cordova/www/
 
