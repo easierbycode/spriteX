@@ -878,6 +878,13 @@ function wireUI() {
     });
   }
 
+  const gifScaleInput = $("gifScaleInput") as HTMLSelectElement | null;
+  if (gifScaleInput) {
+    gifScaleInput.addEventListener("change", () => {
+      if (atlasAnimPlaying) startAtlasPreview(); // restart with new scale
+    });
+  }
+
   // Eyedropper: pick BG color from canvas in realtime
   const pickBtn = $("bgColorPickBtn") as HTMLButtonElement | null;
   if (pickBtn) {
