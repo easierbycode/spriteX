@@ -536,31 +536,46 @@ function generateAtlasGif(frames: string[], fps: number) {
       width: firstFrame.width * scale,
       height: firstFrame.height * scale,
       workerScript: 'gif.worker.js',
-      transparent: 0xFF00FF,
+      // transparent: 0xFF00FF,
     });
 
     const framePromises = frames.map(frameSrc => {
       return new Promise<HTMLCanvasElement>(resolve => {
         const frameImg = new Image();
         frameImg.onload = () => {
-          const canvas = document.createElement("canvas");
-          canvas.width = frameImg.width * scale;
-          canvas.height = frameImg.height * scale;
-          const ctx = canvas.getContext("2d")!;
-          ctx.imageSmoothingEnabled = false;
-          ctx.drawImage(frameImg, 0, 0, frameImg.width, frameImg.height, 0, 0, canvas.width, canvas.height);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const data = imageData.data;
-          for (let i = 0; i < data.length; i += 4) {
-            if (data[i + 3] < 128) {
-              data[i] = 255;
-              data[i + 1] = 0;
-              data[i + 2] = 255;
-              data[i + 3] = 255;
-            }
-          }
-          ctx.putImageData(imageData, 0, 0);
-          resolve(canvas);
+          // Step 1: Create a temporary canvas of the original size
+          const tempCanvas = document.createElement("canvas");
+          tempCanvas.width = frameImg.width;
+          tempCanvas.height = frameImg.height;
+          const tempCtx = tempCanvas.getContext("2d")!;
+
+          // Step 2: Draw the image on it
+          tempCtx.drawImage(frameImg, 0, 0);
+
+          // Step 3: Get ImageData and apply transparency logic
+          // const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+          // const data = imageData.data;
+          // for (let i = 0; i < data.length; i += 4) {
+          //   if (data[i + 3] < 128) {
+          //     data[i] = 255;
+          //     data[i + 1] = 0;
+          //     data[i + 2] = 255;
+          //     data[i + 3] = 255;
+          //   }
+          // }
+          // tempCtx.putImageData(imageData, 0, 0);
+
+          // Step 4: Create the final, scaled canvas
+          const scaledCanvas = document.createElement("canvas");
+          scaledCanvas.width = frameImg.width * scale;
+          scaledCanvas.height = frameImg.height * scale;
+          const scaledCtx = scaledCanvas.getContext("2d")!;
+          scaledCtx.imageSmoothingEnabled = false;
+
+          // Step 5: Draw the temporary canvas onto the scaled canvas
+          scaledCtx.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height, 0, 0, scaledCanvas.width, scaledCanvas.height);
+
+          resolve(scaledCanvas);
         };
         frameImg.src = frameSrc;
       });
