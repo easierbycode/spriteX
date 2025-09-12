@@ -693,7 +693,8 @@ async function loadAtlasAndPreview() {
     const select = $("atlasSelect") as HTMLSelectElement;
     const id = select?.value || "";
     if (!id) {
-        alert("Select an atlas.");
+        // Silently return if no atlas is selected. This can happen when the
+        // list is populated or the user selects the placeholder.
         return;
     }
 
@@ -814,8 +815,8 @@ function wireUI() {
     loadCharacterAndPreview
   );
 
-  ($("loadAtlasBtn") as HTMLButtonElement).addEventListener(
-    "click",
+  ($("atlasSelect") as HTMLSelectElement).addEventListener(
+    "change",
     loadAtlasAndPreview
   );
 
