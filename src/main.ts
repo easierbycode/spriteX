@@ -720,7 +720,10 @@ async function loadAtlasAndPreview() {
         const atlasImg = new Image();
         atlasImg.onload = async () => {
             atlasFrames = await extractFramesFromAtlas(atlasImg, json);
+            // Select all frames by default
+            atlasSelectedFrameIndices = new Set(atlasFrames.map((_, i) => i));
             renderAtlasFrames();
+            startAtlasPreview();
             resolve();
         };
         atlasImg.onerror = () => {
@@ -940,10 +943,50 @@ function setupTheme() {
   });
 }
 
+function setupPWA() {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').then(reg => {
+      console.log('Service worker registered.', reg);
+    }).catch(err => {
+      console.error('Service worker registration failed:', err);
+    });
+  }
+
+  let deferredPrompt: any;
+  const installBtn = $('installBtn') as HTMLButtonElement;
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+
+    if (localStorage.getItem('installPrompted')) {
+      return;
+    }
+
+    installBtn.style.display = 'block';
+
+    installBtn.addEventListener('click', () => {
+      installBtn.style.display = 'none';
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then((choiceResult: any) => {
+        if (choiceResult.outcome === 'accepted') {
+          console.log('User accepted the install prompt');
+        } else {
+          console.log('User dismissed the install prompt');
+        }
+        // Don't prompt again.
+        localStorage.setItem('installPrompted', 'true');
+        deferredPrompt = null;
+      });
+    });
+  });
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   setupCanvases();
   setupTheme();
   wireUI();
+  setupPWA();
   await populateCharacterSelect();
   await populateAtlasSelect();
 });
