@@ -853,13 +853,7 @@ function wireUI() {
         const blob = (atlasAnimPreviewImg as any)._gifBlob as Blob | null;
         if (blob) {
           const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = "atlas-animation.gif";
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          setTimeout(() => URL.revokeObjectURL(url), 2000);
+          window.open(url, '_blank');
         } else {
           alert("No animation generated yet. Click 'Preview Atlas Anim' first.");
         }
