@@ -536,7 +536,7 @@ function generateAtlasGif(frames: string[], fps: number) {
       width: firstFrame.width * scale,
       height: firstFrame.height * scale,
       workerScript: 'gif.worker.js',
-      // transparent: 0xFF00FF,
+      transparent: 0xFF00FF,
     });
 
     const framePromises = frames.map(frameSrc => {
@@ -553,17 +553,17 @@ function generateAtlasGif(frames: string[], fps: number) {
           tempCtx.drawImage(frameImg, 0, 0);
 
           // Step 3: Get ImageData and apply transparency logic
-          // const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-          // const data = imageData.data;
-          // for (let i = 0; i < data.length; i += 4) {
-          //   if (data[i + 3] < 128) {
-          //     data[i] = 255;
-          //     data[i + 1] = 0;
-          //     data[i + 2] = 255;
-          //     data[i + 3] = 255;
-          //   }
-          // }
-          // tempCtx.putImageData(imageData, 0, 0);
+          const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+          const data = imageData.data;
+          for (let i = 0; i < data.length; i += 4) {
+            if (data[i + 3] < 128) {
+              data[i] = 255;
+              data[i + 1] = 0;
+              data[i + 2] = 255;
+              data[i + 3] = 255;
+            }
+          }
+          tempCtx.putImageData(imageData, 0, 0);
 
           // Step 4: Create the final, scaled canvas
           const scaledCanvas = document.createElement("canvas");
@@ -845,8 +845,26 @@ function wireUI() {
   }
 
   const atlasAnimPreviewImg = $("atlasAnimPreviewImg") as HTMLImageElement | null;
-  if (atlasAnimPreviewImg) {
-    setupHoldToDownload(atlasAnimPreviewImg, 'atlas-animation.gif');
+
+  const downloadGifBtn = $("downloadGifBtn") as HTMLButtonElement | null;
+  if (downloadGifBtn) {
+    downloadGifBtn.addEventListener("click", () => {
+      if (atlasAnimPreviewImg) {
+        const blob = (atlasAnimPreviewImg as any)._gifBlob as Blob | null;
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "atlas-animation.gif";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(url), 2000);
+        } else {
+          alert("No animation generated yet. Click 'Preview Atlas Anim' first.");
+        }
+      }
+    });
   }
 
   const atlasFpsInput = $("atlasFpsInput") as HTMLInputElement | null;
@@ -934,47 +952,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   await populateCharacterSelect();
   await populateAtlasSelect();
 });
-
-function setupHoldToDownload(element: HTMLElement, defaultFilename: string) {
-  let pressTimer: number | null = null;
-
-  const startPress = (e: MouseEvent | TouchEvent) => {
-    // Don't interfere with right-clicks
-    if (e instanceof MouseEvent && e.button !== 0) return;
-
-    pressTimer = window.setTimeout(() => {
-      const blob = (element as any)._gifBlob as Blob | null;
-      if (blob) {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = defaultFilename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 2000);
-      } else {
-        // Optional: notify user that there's nothing to download
-        console.log("No GIF blob available for download yet.");
-      }
-      clearPress();
-    }, 800); // 800ms for a "long press"
-  };
-
-  const clearPress = () => {
-    if (pressTimer) {
-      clearTimeout(pressTimer);
-      pressTimer = null;
-    }
-  };
-
-  element.addEventListener("mousedown", startPress as EventListener);
-  element.addEventListener("touchstart", startPress as EventListener);
-  element.addEventListener("mouseup", clearPress);
-  element.addEventListener("mouseleave", clearPress);
-  element.addEventListener("touchend", clearPress);
-  element.addEventListener("touchcancel", clearPress);
-}
 
 function startBgPick() {
   if (bgPickActive) return;
