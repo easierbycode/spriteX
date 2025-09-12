@@ -5,6 +5,8 @@
     <meta charset="utf-8" />
     <title>SpriteXtractor</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0d6efd"/>
+    <link rel="manifest" href="manifest.json" />
     <style>
       :root {
         --bg-color: #f5f6f8;
@@ -55,9 +57,13 @@
         color: var(--h1-color);
         text-shadow: 1px 1px 1px var(--h1-shadow);
       }
-      .theme-switch-wrapper {
+      .header-controls {
         display: flex;
         align-items: center;
+        gap: 16px;
+      }
+      #installBtn {
+        display: none;
       }
       .theme-switch {
         position: relative;
@@ -267,10 +273,13 @@
   <body>
     <div class="header">
       <h1>SpriteXtractor</h1>
-      <label class="theme-switch">
-        <input type="checkbox" id="theme-toggle">
-        <span class="slider round"></span>
-      </label>
+      <div class="header-controls">
+        <button id="installBtn" class="btn">Install App</button>
+        <label class="theme-switch">
+          <input type="checkbox" id="theme-toggle">
+          <span class="slider round"></span>
+        </label>
+      </div>
     </div>
 
     <div class="panel">

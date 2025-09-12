@@ -17,6 +17,7 @@ async function main() {
     resolve(root, "src/vendor/gif.worker.js"),
     resolve(dist, "gif.worker.js")
   );
+  await copyFile(resolve(root, "sw.js"), resolve(dist, "sw.js"));
   await writeFile(
     resolve(dist, "404.html"),
     '<meta http-equiv="refresh" content="0; url=./" />'

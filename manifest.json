@@ -1,0 +1,8 @@
+{
+  "short_name": "SpriteXtractor",
+  "name": "SpriteXtractor",
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#0d6efd",
+  "background_color": "#f5f6f8"
+}
