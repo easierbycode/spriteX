@@ -224,6 +224,9 @@
         display: flex;
         align-items: center;
         justify-content: center;
+        background-color: #000;
+      }
+      .preview-container.bg-checkered {
         background-color: #e0e0e0;
         background-image: linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc), linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc);
         background-size: 10px 10px;
@@ -342,9 +345,11 @@
             style="width: 72px"
           />
           <button id="selectionPreviewBtn" class="btn">Preview Selected</button>
+          <button id="selectionBgBtn" class="btn">Toggle BG</button>
+          <button id="selectionFullscreenBtn" class="btn">Fullscreen</button>
         </div>
         <div class="row" style="margin-top: 8px">
-          <div class="preview-container">
+          <div id="selectionPreviewContainer" class="preview-container">
             <img
               id="selectionPreviewImg"
               class="preview-img"
@@ -415,6 +420,8 @@
             style="width: 72px"
           />
           <button id="atlasPreviewBtn" class="btn">Preview Atlas Anim</button>
+          <button id="atlasBgBtn" class="btn">Toggle BG</button>
+          <button id="atlasFullscreenBtn" class="btn">Fullscreen</button>
           <label for="gifScaleInput">Scale</label>
           <select id="gifScaleInput" style="width: 72px">
             <option value="1">1x</option>
@@ -426,7 +433,7 @@
           </button>
         </div>
         <div class="row" style="margin-top: 8px">
-          <div class="preview-container">
+          <div id="atlasAnimPreviewContainer" class="preview-container">
             <img
               id="atlasAnimPreviewImg"
               class="preview-img"
@@ -445,9 +452,11 @@
         </select>
         <button id="loadCharacterBtn" class="btn">Load Preview</button>
         <div>FPS: <span id="frameRateSpan">-</span></div>
+        <button id="characterBgBtn" class="btn">Toggle BG</button>
+        <button id="characterFullscreenBtn" class="btn">Fullscreen</button>
       </div>
       <div class="row" style="margin-top: 8px">
-          <div class="preview-container">
+          <div id="characterPreviewContainer" class="preview-container">
             <img
               id="characterPreviewImg"
               class="preview-img"
