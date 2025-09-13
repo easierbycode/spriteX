@@ -49,6 +49,9 @@ let erasePickActive = false;
 let erasePickPrevHex: string | null = null;
 let erasePickHoverHex: string | null = null;
 
+// Canvas view state
+let canvasZoom = 1;
+
 function $(id: string) {
   return document.getElementById(id);
 }
@@ -147,6 +150,18 @@ function setCanvasSize(w: number, h: number) {
   originalCanvas.height = h;
   overlayCanvas.width = w;
   overlayCanvas.height = h;
+  applyCanvasZoom();
+}
+
+function applyCanvasZoom() {
+  const scale = canvasZoom;
+  const w = originalCanvas.width;
+  const h = originalCanvas.height;
+
+  originalCanvas.style.width = `${w * scale}px`;
+  originalCanvas.style.height = `${h * scale}px`;
+  overlayCanvas.style.width = `${w * scale}px`;
+  overlayCanvas.style.height = `${h * scale}px`;
 }
 
 function drawOverlay() {
@@ -904,6 +919,18 @@ function wireUI() {
       if (atlasAnimPlaying) startAtlasPreview(); // restart with new scale
     });
   }
+
+  // Main canvas controls
+  const zoomBtn = $("canvasZoomBtn") as HTMLButtonElement;
+  zoomBtn?.addEventListener("click", () => {
+    canvasZoom = (canvasZoom % 4) + 1; // Cycle 1, 2, 3, 4
+    zoomBtn.textContent = `Zoom: ${canvasZoom}x`;
+    applyCanvasZoom();
+  });
+
+  $("canvasFullscreenBtn")?.addEventListener("click", () => {
+    $("canvasContainer")?.requestFullscreen();
+  });
 
   // Eyedropper: pick BG color from canvas in realtime
   const pickBtn = $("bgColorPickBtn") as HTMLButtonElement | null;

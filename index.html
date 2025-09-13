@@ -320,8 +320,14 @@
 
     <div class="panel grid-2">
       <div>
-        <div class="subtitle">Canvas</div>
-        <div class="canv-wrap">
+        <div class="row" style="margin-bottom: 6px;">
+            <div class="subtitle">Canvas</div>
+            <div style="margin-left: auto;">
+                <button id="canvasZoomBtn" class="btn">Zoom: 1x</button>
+                <button id="canvasFullscreenBtn" class="btn">Fullscreen</button>
+            </div>
+        </div>
+        <div id="canvasContainer" class="canv-wrap">
           <canvas id="originalCanvas" width="640" height="480"></canvas>
           <canvas id="overlayCanvas" width="640" height="480"></canvas>
         </div>
