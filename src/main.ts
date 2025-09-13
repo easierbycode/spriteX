@@ -839,6 +839,26 @@ function wireUI() {
     });
   }
 
+  // Preview containers' extra controls
+  $("selectionBgBtn")?.addEventListener("click", () => {
+    $("selectionPreviewContainer")?.classList.toggle("bg-checkered");
+  });
+  $("selectionFullscreenBtn")?.addEventListener("click", () => {
+    $("selectionPreviewContainer")?.requestFullscreen();
+  });
+  $("atlasBgBtn")?.addEventListener("click", () => {
+    $("atlasAnimPreviewContainer")?.classList.toggle("bg-checkered");
+  });
+  $("atlasFullscreenBtn")?.addEventListener("click", () => {
+    $("atlasAnimPreviewContainer")?.requestFullscreen();
+  });
+  $("characterBgBtn")?.addEventListener("click", () => {
+    $("characterPreviewContainer")?.classList.toggle("bg-checkered");
+  });
+  $("characterFullscreenBtn")?.addEventListener("click", () => {
+    $("characterPreviewContainer")?.requestFullscreen();
+  });
+
   // Atlas preview controls
   const atlasBtn = $("atlasPreviewBtn") as HTMLButtonElement | null;
   if (atlasBtn) {
