@@ -9,11 +9,13 @@ import {
   loadCharacterPreviewFromAtlas,
   fetchAllCharacters,
   fetchAllAtlases,
+  fetchAllSprites,
   fetchAtlas,
   rgbToHex,
   hexToRgb,
   type DetectedSprite,
   type RGB,
+  type SpriteData,
 } from "./atlasManager";
 
 let originalCanvas: HTMLCanvasElement;
@@ -51,6 +53,9 @@ let erasePickHoverHex: string | null = null;
 
 // Canvas view state
 let canvasZoom = 1;
+
+// Data state
+let dbSprites: Record<string, string | SpriteData> = {};
 
 function $(id: string) {
   return document.getElementById(id);
@@ -288,6 +293,8 @@ function refreshSelectionPreviewFrames(keepPlaying = true) {
   }
 }
 
+// This function is now replaced by populateSpritePreviewDropdownFromDB
+/*
 function updateSpritePreviewDropdown() {
   const select = $('spritePreviewSelect') as HTMLSelectElement;
   if (!select) return;
@@ -314,11 +321,17 @@ function updateSpritePreviewDropdown() {
     select.value = currentVal;
   }
 }
+*/
 
 function onSelectionChanged() {
   // Keep preview in sync with selection
   refreshSelectionPreviewFrames(true);
-  updateSpritePreviewDropdown();
+  // The sprite preview dropdown is now populated from the DB, not from the local selection.
+  // updateSpritePreviewDropdown();
+}
+
+function ensureDataURL(s: string): string {
+    return s.startsWith("data:") ? s : `data:image/png;base64,${s}`;
 }
 
 function extractSingleSpriteDataURL(index: number): string | null {
@@ -900,12 +913,18 @@ function wireUI() {
   const spritePreviewSelect = $("spritePreviewSelect") as HTMLSelectElement | null;
   if (spritePreviewSelect) {
     spritePreviewSelect.addEventListener("change", () => {
-        const idx = Number(spritePreviewSelect.value);
+        const key = spritePreviewSelect.value;
         const img = $("spritePreviewImg") as HTMLImageElement;
-        if (img && !isNaN(idx) && spritePreviewSelect.value) {
-            img.src = extractSingleSpriteDataURL(idx) || '';
-        } else if (img) {
-            img.src = '';
+        if (!key || !img) {
+            if (img) img.src = '';
+            return;
+        }
+
+        const spriteData = dbSprites[key];
+        if (typeof spriteData === 'string') {
+            img.src = ensureDataURL(spriteData);
+        } else if (spriteData?.png) {
+            img.src = ensureDataURL(spriteData.png);
         }
     });
   }
@@ -1098,6 +1117,45 @@ function setupPWA() {
   });
 }
 
+async function populateSpritePreviewDropdownFromDB() {
+    const select = $("spritePreviewSelect") as HTMLSelectElement;
+    if (!select) return;
+
+    select.innerHTML = "";
+    const loadingOpt = document.createElement("option");
+    loadingOpt.value = "";
+    loadingOpt.textContent = "Loading sprites...";
+    select.appendChild(loadingOpt);
+    select.disabled = true;
+
+    try {
+        dbSprites = await fetchAllSprites();
+        select.innerHTML = "";
+
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "-- Select a sprite --";
+        select.appendChild(placeholder);
+
+        Object.keys(dbSprites).forEach(id => {
+            const opt = document.createElement("option");
+            opt.value = id;
+            opt.textContent = id;
+            select.appendChild(opt);
+        });
+
+        select.disabled = false;
+    } catch (err) {
+        select.innerHTML = "";
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "Failed to load sprites";
+        select.appendChild(opt);
+        select.disabled = true;
+        console.error(err);
+    }
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   setupCanvases();
   setupTheme();
@@ -1105,6 +1163,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupPWA();
   await populateCharacterSelect();
   await populateAtlasSelect();
+  await populateSpritePreviewDropdownFromDB();
 });
 
 function startBgPick() {
