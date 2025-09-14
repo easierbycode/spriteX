@@ -49,6 +49,9 @@ let erasePickActive = false;
 let erasePickPrevHex: string | null = null;
 let erasePickHoverHex: string | null = null;
 
+// Canvas view state
+let canvasZoom = 1;
+
 function $(id: string) {
   return document.getElementById(id);
 }
@@ -147,6 +150,18 @@ function setCanvasSize(w: number, h: number) {
   originalCanvas.height = h;
   overlayCanvas.width = w;
   overlayCanvas.height = h;
+  applyCanvasZoom();
+}
+
+function applyCanvasZoom() {
+  const scale = canvasZoom;
+  const w = originalCanvas.width;
+  const h = originalCanvas.height;
+
+  originalCanvas.style.width = `${w * scale}px`;
+  originalCanvas.style.height = `${h * scale}px`;
+  overlayCanvas.style.width = `${w * scale}px`;
+  overlayCanvas.style.height = `${h * scale}px`;
 }
 
 function drawOverlay() {
@@ -273,9 +288,52 @@ function refreshSelectionPreviewFrames(keepPlaying = true) {
   }
 }
 
+function updateSpritePreviewDropdown() {
+  const select = $('spritePreviewSelect') as HTMLSelectElement;
+  if (!select) return;
+
+  const sorted = getSortedSelectedIndices();
+  const currentVal = select.value;
+
+  select.innerHTML = '';
+
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '-- Select a sprite --';
+  select.appendChild(placeholder);
+
+  sorted.forEach(idx => {
+    const opt = document.createElement('option');
+    opt.value = String(idx);
+    opt.textContent = `Sprite ${idx}`;
+    select.appendChild(opt);
+  });
+
+  // Try to preserve the selection if it still exists
+  if (sorted.includes(Number(currentVal))) {
+    select.value = currentVal;
+  }
+}
+
 function onSelectionChanged() {
   // Keep preview in sync with selection
   refreshSelectionPreviewFrames(true);
+  updateSpritePreviewDropdown();
+}
+
+function extractSingleSpriteDataURL(index: number): string | null {
+    const s = detected[index];
+    if (!s) return null;
+
+    const c = document.createElement("canvas");
+    c.width = s.w;
+    c.height = s.h;
+
+    const cctx = c.getContext("2d")!;
+    cctx.imageSmoothingEnabled = false;
+    cctx.drawImage(originalCanvas, s.x, s.y, s.w, s.h, 0, 0, s.w, s.h);
+
+    return c.toDataURL("image/png");
 }
 
 async function loadFromURL(url: string) {
@@ -839,6 +897,19 @@ function wireUI() {
     });
   }
 
+  const spritePreviewSelect = $("spritePreviewSelect") as HTMLSelectElement | null;
+  if (spritePreviewSelect) {
+    spritePreviewSelect.addEventListener("change", () => {
+        const idx = Number(spritePreviewSelect.value);
+        const img = $("spritePreviewImg") as HTMLImageElement;
+        if (img && !isNaN(idx) && spritePreviewSelect.value) {
+            img.src = extractSingleSpriteDataURL(idx) || '';
+        } else if (img) {
+            img.src = '';
+        }
+    });
+  }
+
   // Preview containers' extra controls
   $("selectionBgBtn")?.addEventListener("click", () => {
     $("selectionPreviewContainer")?.classList.toggle("bg-checkered");
@@ -904,6 +975,18 @@ function wireUI() {
       if (atlasAnimPlaying) startAtlasPreview(); // restart with new scale
     });
   }
+
+  // Main canvas controls
+  const zoomBtn = $("canvasZoomBtn") as HTMLButtonElement;
+  zoomBtn?.addEventListener("click", () => {
+    canvasZoom = (canvasZoom % 4) + 1; // Cycle 1, 2, 3, 4
+    zoomBtn.textContent = `Zoom: ${canvasZoom}x`;
+    applyCanvasZoom();
+  });
+
+  $("canvasFullscreenBtn")?.addEventListener("click", () => {
+    $("canvasContainer")?.requestFullscreen();
+  });
 
   // Eyedropper: pick BG color from canvas in realtime
   const pickBtn = $("bgColorPickBtn") as HTMLButtonElement | null;
