@@ -18,6 +18,7 @@ async function main() {
     resolve(dist, "gif.worker.js")
   );
   await copyFile(resolve(root, "sw.js"), resolve(dist, "sw.js"));
+  await copyFile(resolve(root, "manifest.json"), resolve(dist, "manifest.json"));
   await writeFile(
     resolve(dist, "404.html"),
     '<meta http-equiv="refresh" content="0; url=./" />'
