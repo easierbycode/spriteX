@@ -339,6 +339,21 @@
           canvas to select or deselect them.
         </div>
 
+        <hr style="border-color: var(--panel-border); margin: 12px 0;">
+
+        <!-- Single Sprite Preview -->
+        <div class="row">
+            <label for="spritePreviewSelect">Preview Sprite</label>
+            <select id="spritePreviewSelect" style="min-width: 150px;">
+                <option value="">-- Select --</option>
+            </select>
+        </div>
+        <div class="row" style="margin-top: 8px">
+            <div id="spritePreviewContainer" class="preview-container">
+                <img id="spritePreviewImg" class="preview-img" alt="Sprite Preview" />
+            </div>
+        </div>
+
         <!-- Selection Animation Preview Controls -->
         <div class="row" style="margin-top: 10px">
           <label for="selectionFpsInput">Preview FPS</label>

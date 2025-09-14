@@ -288,9 +288,52 @@ function refreshSelectionPreviewFrames(keepPlaying = true) {
   }
 }
 
+function updateSpritePreviewDropdown() {
+  const select = $('spritePreviewSelect') as HTMLSelectElement;
+  if (!select) return;
+
+  const sorted = getSortedSelectedIndices();
+  const currentVal = select.value;
+
+  select.innerHTML = '';
+
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '-- Select a sprite --';
+  select.appendChild(placeholder);
+
+  sorted.forEach(idx => {
+    const opt = document.createElement('option');
+    opt.value = String(idx);
+    opt.textContent = `Sprite ${idx}`;
+    select.appendChild(opt);
+  });
+
+  // Try to preserve the selection if it still exists
+  if (sorted.includes(Number(currentVal))) {
+    select.value = currentVal;
+  }
+}
+
 function onSelectionChanged() {
   // Keep preview in sync with selection
   refreshSelectionPreviewFrames(true);
+  updateSpritePreviewDropdown();
+}
+
+function extractSingleSpriteDataURL(index: number): string | null {
+    const s = detected[index];
+    if (!s) return null;
+
+    const c = document.createElement("canvas");
+    c.width = s.w;
+    c.height = s.h;
+
+    const cctx = c.getContext("2d")!;
+    cctx.imageSmoothingEnabled = false;
+    cctx.drawImage(originalCanvas, s.x, s.y, s.w, s.h, 0, 0, s.w, s.h);
+
+    return c.toDataURL("image/png");
 }
 
 async function loadFromURL(url: string) {
@@ -851,6 +894,19 @@ function wireUI() {
   if (fpsInput) {
     fpsInput.addEventListener("change", () => {
       if (selectionPlaying) startSelectionPreview(); // restart with new fps
+    });
+  }
+
+  const spritePreviewSelect = $("spritePreviewSelect") as HTMLSelectElement | null;
+  if (spritePreviewSelect) {
+    spritePreviewSelect.addEventListener("change", () => {
+        const idx = Number(spritePreviewSelect.value);
+        const img = $("spritePreviewImg") as HTMLImageElement;
+        if (img && !isNaN(idx) && spritePreviewSelect.value) {
+            img.src = extractSingleSpriteDataURL(idx) || '';
+        } else if (img) {
+            img.src = '';
+        }
     });
   }
 
