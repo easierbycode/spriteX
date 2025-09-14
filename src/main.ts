@@ -962,20 +962,50 @@ function wireUI() {
 
   const downloadGifBtn = $("downloadGifBtn") as HTMLButtonElement | null;
   if (downloadGifBtn) {
-    downloadGifBtn.addEventListener("click", () => {
+    downloadGifBtn.addEventListener("click", async () => {
       if (atlasAnimPreviewImg) {
         const blob = (atlasAnimPreviewImg as any)._gifBlob as Blob | null;
         if (blob) {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = 'animation.gif';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
+          const file = new File([blob], "animation.gif", {
+            type: "image/gif",
+          });
+          const data = {
+            files: [file],
+            title: "Sprite Animation",
+            text: "animation.gif",
+          };
+
+          // Use share if available, otherwise fallback to download
+          if (navigator.share && navigator.canShare && navigator.canShare(data)) {
+            try {
+              await navigator.share(data);
+            } catch (err) {
+              console.error("Share failed:", err);
+              // Fallback to download if share fails
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "animation.gif";
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+            }
+          } else {
+            // Standard download fallback
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "animation.gif";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }
         } else {
-          alert("No animation generated yet. Click 'Preview Atlas Anim' first.");
+          alert(
+            "No animation generated yet. Click 'Preview Atlas Anim' first."
+          );
         }
       }
     });
