@@ -11,6 +11,7 @@ import {
   fetchAllAtlases,
   fetchAllSprites,
   fetchAtlas,
+  fetchCharacter,
   rgbToHex,
   hexToRgb,
   type DetectedSprite,
@@ -29,6 +30,11 @@ let detectedBg: RGB | null = null;
 let detectedTolerance = 12;
 
 let characterAnimTimer: number | null = null;
+let lastCharPreview: {
+  frameRate: number;
+  frames: string[];
+  textures: string[];
+} | null = null;
 let selectionAnimTimer: number | null = null;
 let selectionFrames: string[] = [];
 let selectionFrameIndex = 0;
@@ -817,9 +823,11 @@ async function loadCharacterAndPreview() {
   const res = await loadCharacterPreviewFromAtlas(id);
   if (!res || !res.frames.length) {
     alert("No frames found for character or its atlas.");
+    lastCharPreview = null;
     return;
   }
 
+  lastCharPreview = res; // Save for PNG download
   const fps = res.frameRate || 6;
   const dur = Math.max(1, Math.round(1000 / fps));
 
@@ -834,6 +842,95 @@ async function loadCharacterAndPreview() {
     img.src = res.frames[i % res.frames.length];
     i++;
   }, dur);
+}
+
+/**
+ * Creates a blob from the given content and triggers a browser download.
+ * @param filename The name of the file to save.
+ * @param content The string content to put in the file.
+ * @param type The MIME type of the file.
+ */
+function downloadFile(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function downloadCharacterJson() {
+  const select = $("characterSelect") as HTMLSelectElement;
+  const id = select?.value || "";
+  if (!id) {
+    alert("Select a character first.");
+    return;
+  }
+
+  const character = await fetchCharacter(id);
+  if (!character) {
+    alert("Failed to fetch character data.");
+    return;
+  }
+
+  const filename = `${character.name || id}.json`;
+  const content = JSON.stringify(character, null, 2);
+  downloadFile(filename, content, "application/json");
+}
+
+async function downloadCharacterPng() {
+  const select = $("characterSelect") as HTMLSelectElement;
+  const id = select?.value || "";
+  if (!id || !lastCharPreview || !lastCharPreview.frames.length) {
+    alert("Load a character preview first.");
+    return;
+  }
+
+  const charName =
+    select.options[select.selectedIndex]?.textContent || id || "character";
+  const filename = `${charName}.png`;
+
+  const frames = lastCharPreview.frames;
+  const frameImages = await Promise.all(
+    frames.map((src) => {
+      return new Promise<HTMLImageElement>((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(new Image()); // resolve with empty image on error
+        img.src = src;
+      });
+    })
+  );
+
+  const maxWidth = frameImages.reduce((max, img) => Math.max(max, img.width), 0);
+  const totalHeight = frameImages.reduce((sum, img) => sum + img.height, 0);
+
+  if (maxWidth === 0 || totalHeight === 0) {
+    alert("Could not load character frame images.");
+    return;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = maxWidth;
+  canvas.height = totalHeight;
+  const ctx = canvas.getContext("2d")!;
+
+  let currentY = 0;
+  frameImages.forEach((img) => {
+    ctx.drawImage(img, 0, currentY);
+    currentY += img.height;
+  });
+
+  const dataURL = canvas.toDataURL("image/png");
+  const a = document.createElement("a");
+  a.href = dataURL;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 function wireUI() {
@@ -887,6 +984,16 @@ function wireUI() {
   ($("loadCharacterBtn") as HTMLButtonElement).addEventListener(
     "click",
     loadCharacterAndPreview
+  );
+
+  ($("downloadCharJsonBtn") as HTMLButtonElement).addEventListener(
+    "click",
+    downloadCharacterJson
+  );
+
+  ($("downloadCharPngBtn") as HTMLButtonElement).addEventListener(
+    "click",
+    downloadCharacterPng
   );
 
   ($("atlasSelect") as HTMLSelectElement).addEventListener(
@@ -966,21 +1073,16 @@ function wireUI() {
       if (atlasAnimPreviewImg) {
         const blob = (atlasAnimPreviewImg as any)._gifBlob as Blob | null;
         if (blob) {
-          const file = new File([blob], "animation.gif", {
-            type: "image/gif",
-          });
-          const data = {
-            files: [file],
-            title: "Sprite Animation",
-            text: "animation.gif",
-          };
+          const atlasSelect = $("atlasSelect") as HTMLSelectElement;
+          const atlasName =
+            atlasSelect.options[atlasSelect.selectedIndex]?.textContent ||
+            "animation";
+          const filename = `${atlasName}.gif`;
 
-          // Use share if available, otherwise fallback to download
-          // Note (from agent): Bypassing navigator.share as it's unreliable in Android WebViews.
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
-          a.download = "animation.gif";
+          a.download = filename;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
