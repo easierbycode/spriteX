@@ -3,15 +3,22 @@ const urlsToCache = [
   '/',
   '/index.html',
   '/assets/main.js',
-  '/gif.worker.js'
+  '/gif.worker.js',
+  '/favicon.ico'
 ];
 
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => {
+      .then(async (cache) => {
         console.log('Opened cache');
-        return cache.addAll(urlsToCache);
+        for (const url of urlsToCache) {
+          try {
+            await cache.add(url);
+          } catch (error) {
+            console.warn(`Failed to cache ${url}:`, error);
+          }
+        }
       })
   );
 });
