@@ -1208,11 +1208,6 @@ function setupPWA() {
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     deferredPrompt = e;
-
-    if (localStorage.getItem('installPrompted')) {
-      return;
-    }
-
     installBtn.style.display = 'block';
 
     installBtn.addEventListener('click', () => {
@@ -1224,8 +1219,6 @@ function setupPWA() {
         } else {
           console.log('User dismissed the install prompt');
         }
-        // Don't prompt again.
-        localStorage.setItem('installPrompted', 'true');
         deferredPrompt = null;
       });
     });
