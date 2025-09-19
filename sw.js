@@ -1,4 +1,4 @@
-const CACHE_NAME = 'spritextractor-cache-v1';
+const CACHE_NAME = 'spritex-cache-v1';
 const urlsToCache = [
   '/',
   '/index.html',
