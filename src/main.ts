@@ -481,6 +481,8 @@ async function buildAtlasAndPreview() {
   (img as any)._atlasDataURL = dataURL;
 
   $("saveAtlasFirebaseBtn")!.removeAttribute("disabled");
+  $("downloadAtlasJsonBtn")!.removeAttribute("disabled");
+  $("downloadAtlasPngBtn")!.removeAttribute("disabled");
 
   // --- New logic for atlas frame preview ---
   stopAtlasPreview();
@@ -678,6 +680,10 @@ async function generateAtlasGif(frames: string[], fps: number) {
     const finalFrameCtx = finalFrameCanvas.getContext("2d")!;
     finalFrameCtx.imageSmoothingEnabled = false;
 
+    // Fill with magic pink for transparency
+    finalFrameCtx.fillStyle = '#FF00FF';
+    finalFrameCtx.fillRect(0, 0, gifWidth, gifHeight);
+
     // Step 4: Draw the processed temp canvas onto the final canvas (centered)
     const scaledWidth = frameImg.width * scale;
     const scaledHeight = frameImg.height * scale;
@@ -812,6 +818,9 @@ async function loadAtlasAndPreview() {
 
     (img as any)._atlasJson = json;
     (img as any)._atlasDataURL = dataURL;
+
+    $("downloadAtlasJsonBtn")!.removeAttribute("disabled");
+    $("downloadAtlasPngBtn")!.removeAttribute("disabled");
 
     // This part is the same as in buildAtlasAndPreview
     stopAtlasPreview();
@@ -957,6 +966,46 @@ async function downloadCharacterPng() {
   document.body.removeChild(a);
 }
 
+function downloadAtlasJson() {
+  const img = $("atlasPreviewImg") as HTMLImageElement;
+  const json = (img as any)._atlasJson;
+
+  if (!json) {
+    alert("Build or load an atlas first.");
+    return;
+  }
+
+  const nameInput = $("atlasNameInput") as HTMLInputElement;
+  const select = $("atlasSelect") as HTMLSelectElement;
+  const atlasName = (nameInput?.value.trim()) || (select?.value) || "atlas";
+  const filename = `${atlasName}.json`;
+  const content = JSON.stringify(json, null, 2);
+
+  downloadFile(filename, content, "application/json");
+}
+
+function downloadAtlasPng() {
+  const img = $("atlasPreviewImg") as HTMLImageElement;
+  const dataURL = (img as any)._atlasDataURL;
+
+  if (!dataURL) {
+    alert("Build or load an atlas first.");
+    return;
+  }
+
+  const nameInput = $("atlasNameInput") as HTMLInputElement;
+  const select = $("atlasSelect") as HTMLSelectElement;
+  const atlasName = (nameInput?.value.trim()) || (select?.value) || "atlas";
+  const filename = `${atlasName}.png`;
+
+  const a = document.createElement("a");
+  a.href = dataURL;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 function wireUI() {
   ($("btnAddUrl") as HTMLButtonElement).addEventListener("click", async () => {
     const val = ($("fileUrl") as HTMLInputElement).value.trim();
@@ -1018,6 +1067,16 @@ function wireUI() {
   ($("downloadCharPngBtn") as HTMLButtonElement).addEventListener(
     "click",
     downloadCharacterPng
+  );
+
+  ($("downloadAtlasJsonBtn") as HTMLButtonElement).addEventListener(
+    "click",
+    downloadAtlasJson
+  );
+
+  ($("downloadAtlasPngBtn") as HTMLButtonElement).addEventListener(
+    "click",
+    downloadAtlasPng
   );
 
   ($("atlasSelect") as HTMLSelectElement).addEventListener(
