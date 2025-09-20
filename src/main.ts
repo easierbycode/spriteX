@@ -596,7 +596,7 @@ function startAtlasPreview() {
   if (btn) btn.textContent = "Stop Preview";
 }
 
-function generateAtlasGif(frames: string[], fps: number) {
+async function generateAtlasGif(frames: string[], fps: number) {
   if (!frames.length) return;
 
   const img = $("atlasAnimPreviewImg") as any;
@@ -604,72 +604,96 @@ function generateAtlasGif(frames: string[], fps: number) {
 
   const scale = Number(($("gifScaleInput") as HTMLSelectElement)?.value || 1);
 
-  const firstFrame = new Image();
-  firstFrame.src = frames[0];
-  firstFrame.onload = () => {
-    const gif = new GIF({
-      workers: 2,
-      quality: 10,
-      width: firstFrame.width * scale,
-      height: firstFrame.height * scale,
-      workerScript: 'gif.worker.js',
-      transparent: 0xFF00FF,
-    });
+  // 1. Load all frame images and find max dimensions
+  const frameImages = await Promise.all(
+    frames.map(frameSrc => new Promise<HTMLImageElement>(resolve => {
+      const frameImg = new Image();
+      frameImg.onload = () => resolve(frameImg);
+      frameImg.onerror = () => {
+        // Resolve with an empty image on error to avoid breaking Promise.all
+        // It will have width/height of 0 and won't affect max size.
+        resolve(new Image());
+      };
+      frameImg.src = frameSrc;
+    }))
+  );
 
-    const framePromises = frames.map(frameSrc => {
-      return new Promise<HTMLCanvasElement>(resolve => {
-        const frameImg = new Image();
-        frameImg.onload = () => {
-          // Step 1: Create a temporary canvas of the original size
-          const tempCanvas = document.createElement("canvas");
-          tempCanvas.width = frameImg.width;
-          tempCanvas.height = frameImg.height;
-          const tempCtx = tempCanvas.getContext("2d")!;
+  let maxWidth = 0;
+  let maxHeight = 0;
+  for (const frameImg of frameImages) {
+    if (frameImg.width > maxWidth) maxWidth = frameImg.width;
+    if (frameImg.height > maxHeight) maxHeight = frameImg.height;
+  }
 
-          // Step 2: Draw the image on it
-          tempCtx.drawImage(frameImg, 0, 0);
+  const gifWidth = maxWidth * scale;
+  const gifHeight = maxHeight * scale;
 
-          // Step 3: Get ImageData and apply transparency logic
-          const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-          const data = imageData.data;
-          for (let i = 0; i < data.length; i += 4) {
-            if (data[i + 3] < 128) {
-              data[i] = 255;
-              data[i + 1] = 0;
-              data[i + 2] = 255;
-              data[i + 3] = 255;
-            }
-          }
-          tempCtx.putImageData(imageData, 0, 0);
+  if (gifWidth === 0 || gifHeight === 0) {
+    console.error("Could not generate GIF, max dimensions are zero.");
+    return;
+  }
 
-          // Step 4: Create the final, scaled canvas
-          const scaledCanvas = document.createElement("canvas");
-          scaledCanvas.width = frameImg.width * scale;
-          scaledCanvas.height = frameImg.height * scale;
-          const scaledCtx = scaledCanvas.getContext("2d")!;
-          scaledCtx.imageSmoothingEnabled = false;
+  const gif = new GIF({
+    workers: 2,
+    quality: 10,
+    width: gifWidth,
+    height: gifHeight,
+    workerScript: 'gif.worker.js',
+    transparent: 0xFF00FF, // Magic pink
+  });
 
-          // Step 5: Draw the temporary canvas onto the scaled canvas
-          scaledCtx.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height, 0, 0, scaledCanvas.width, scaledCanvas.height);
+  // 2. Process each frame on a consistently-sized canvas
+  for (const frameImg of frameImages) {
+    if (frameImg.width === 0 || frameImg.height === 0) continue; // Skip failed images
 
-          resolve(scaledCanvas);
-        };
-        frameImg.src = frameSrc;
-      });
-    });
+    // Step 1: Create a temporary canvas of the original size to apply transparency
+    const tempCanvas = document.createElement("canvas");
+    tempCanvas.width = frameImg.width;
+    tempCanvas.height = frameImg.height;
+    const tempCtx = tempCanvas.getContext("2d")!;
+    tempCtx.drawImage(frameImg, 0, 0);
 
-    Promise.all(framePromises).then(canvases => {
-      canvases.forEach(canvas => {
-        gif.addFrame(canvas, { delay: 1000 / fps });
-      });
+    // Step 2: Apply transparency logic (replace semi-transparent with magic pink)
+    try {
+      const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+      const data = imageData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] < 128) { // alpha channel
+          data[i] = 255;     // r
+          data[i + 1] = 0;       // g
+          data[i + 2] = 255;     // b
+          data[i + 3] = 255;     // a
+        }
+      }
+      tempCtx.putImageData(imageData, 0, 0);
+    } catch (e) {
+      console.warn("Could not process image data for GIF, likely a CORS issue with an external image.", e);
+      // Continue with the original image if processing fails
+    }
 
-      gif.on('finished', (blob: Blob) => {
-        if (img) img._gifBlob = blob;
-      });
+    // Step 3: Create the final, max-sized canvas for this frame
+    const finalFrameCanvas = document.createElement("canvas");
+    finalFrameCanvas.width = gifWidth;
+    finalFrameCanvas.height = gifHeight;
+    const finalFrameCtx = finalFrameCanvas.getContext("2d")!;
+    finalFrameCtx.imageSmoothingEnabled = false;
 
-      gif.render();
-    });
-  };
+    // Step 4: Draw the processed temp canvas onto the final canvas (centered)
+    const scaledWidth = frameImg.width * scale;
+    const scaledHeight = frameImg.height * scale;
+    const x = (gifWidth - scaledWidth) / 2;
+    const y = (gifHeight - scaledHeight) / 2;
+    finalFrameCtx.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height, x, y, scaledWidth, scaledHeight);
+
+    // Step 5: Add the final, consistently-sized frame to the GIF
+    gif.addFrame(finalFrameCanvas, { delay: 1000 / fps });
+  }
+
+  gif.on('finished', (blob: Blob) => {
+    if (img) img._gifBlob = blob;
+  });
+
+  gif.render();
 }
 
 function refreshAtlasPreviewFrames(keepPlaying = true) {
