@@ -518,10 +518,12 @@ export function createAtlasJson(
   let currentX = 0;
   let currentY = 0;
   let rowHeight = 0;
-  const maxWidth = 2048;
+  let actualWidth = 0;
+  const packingWidth = 2048;
 
   Object.entries(sprites).forEach(([name, dimensions]) => {
-    if (currentX + dimensions.width > maxWidth) {
+    if (currentX + dimensions.width > packingWidth) {
+      actualWidth = Math.max(actualWidth, currentX);
       currentX = 0;
       currentY += rowHeight;
       rowHeight = 0;
@@ -549,6 +551,8 @@ export function createAtlasJson(
     rowHeight = Math.max(rowHeight, dimensions.height);
   });
 
+  actualWidth = Math.max(actualWidth, currentX);
+
   return {
     frames,
     meta: {
@@ -556,7 +560,7 @@ export function createAtlasJson(
       version: "1.0",
       image: "atlas.png",
       format: "RGBA8888",
-      size: { w: maxWidth, h: currentY + rowHeight },
+      size: { w: actualWidth, h: currentY + rowHeight },
       scale: "1",
     },
   };
@@ -569,6 +573,8 @@ export async function createAtlasPng(
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
   ctx.imageSmoothingEnabled = false;
+  // Canvas dimensions are set by the atlasJson metadata.
+  // The createAtlasJson function is responsible for calculating the final size.
   canvas.width = atlasJson.meta.size.w;
   canvas.height = atlasJson.meta.size.h;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
