@@ -678,6 +678,10 @@ async function generateAtlasGif(frames: string[], fps: number) {
     const finalFrameCtx = finalFrameCanvas.getContext("2d")!;
     finalFrameCtx.imageSmoothingEnabled = false;
 
+    // Fill with magic pink for transparency
+    finalFrameCtx.fillStyle = '#FF00FF';
+    finalFrameCtx.fillRect(0, 0, gifWidth, gifHeight);
+
     // Step 4: Draw the processed temp canvas onto the final canvas (centered)
     const scaledWidth = frameImg.width * scale;
     const scaledHeight = frameImg.height * scale;
