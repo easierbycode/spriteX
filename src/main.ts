@@ -878,21 +878,20 @@ async function loadCharacterAndPreview() {
 }
 
 /**
- * Creates a blob from the given content and triggers a browser download.
+ * Creates a data URL from the given content and triggers a browser download.
+ * This is more reliable than blob URLs for webviews.
  * @param filename The name of the file to save.
  * @param content The string content to put in the file.
  * @param type The MIME type of the file.
  */
 function downloadFile(filename: string, content: string, type: string) {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
+  const url = `data:${type};charset=utf-8,${encodeURIComponent(content)}`;
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
 }
 
 async function downloadCharacterJson() {
@@ -1162,14 +1161,23 @@ function wireUI() {
             "animation";
           const filename = `${atlasName}.gif`;
 
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
+          // Use FileReader to convert blob to data URL for more reliable downloads
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            if (e.target?.result) {
+              const url = e.target.result as string;
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = filename;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+            }
+          };
+          reader.onerror = () => {
+            alert("Failed to read GIF data for download.");
+          };
+          reader.readAsDataURL(blob);
         } else {
           alert(
             "No animation generated yet. Click 'Preview Atlas Anim' first."
