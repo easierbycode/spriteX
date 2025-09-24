@@ -61,6 +61,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Make hook script executable
+        run: chmod +x cordova_hooks/copy_android_files.cjs
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
