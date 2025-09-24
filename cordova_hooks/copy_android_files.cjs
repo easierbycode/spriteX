@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 module.exports = function(context) {
-    console.log('Executing copy_android_files.js hook...');
+    console.log('Executing copy_android_files.cjs hook...');
 
     const platformRoot = path.join(context.opts.projectRoot, 'platforms/android');
     const projectRoot = context.opts.projectRoot;
@@ -20,7 +20,7 @@ module.exports = function(context) {
     // Check if the destination directory exists
     if (fs.existsSync(destinationDir)) {
         console.log(`Destination directory found: ${destinationDir}`);
-
+        
         // Define destination paths
         const mainActivityDest = path.join(destinationDir, 'MainActivity.java');
         const webAppInterfaceDest = path.join(destinationDir, 'WebAppInterface.java');
