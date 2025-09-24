@@ -878,6 +878,28 @@ async function loadCharacterAndPreview() {
 }
 
 /**
+ * Triggers a file download by either calling the native Android interface
+ * or by using the standard web anchor tag method as a fallback.
+ * @param url The data URL of the file to download.
+ * @param filename The desired name of the file.
+ * @param mimeType The MIME type of the file.
+ */
+function triggerDownload(url: string, filename: string, mimeType: string) {
+  // Check for a native Android interface
+  if ((window as any).Android?.downloadFile) {
+    (window as any).Android.downloadFile(url, filename, mimeType);
+  } else {
+    // Fallback for standard web browsers
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+}
+
+/**
  * Creates a data URL from the given content and triggers a browser download.
  * This is more reliable than blob URLs for webviews.
  * @param filename The name of the file to save.
@@ -886,12 +908,7 @@ async function loadCharacterAndPreview() {
  */
 function downloadFile(filename: string, content: string, type: string) {
   const url = `data:${type};charset=utf-8,${encodeURIComponent(content)}`;
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  triggerDownload(url, filename, type);
 }
 
 async function downloadCharacterJson() {
@@ -957,12 +974,7 @@ async function downloadCharacterPng() {
   });
 
   const dataURL = canvas.toDataURL("image/png");
-  const a = document.createElement("a");
-  a.href = dataURL;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  triggerDownload(dataURL, filename, "image/png");
 }
 
 function downloadAtlasJson() {
@@ -997,12 +1009,7 @@ function downloadAtlasPng() {
   const atlasName = (nameInput?.value.trim()) || (select?.value) || "atlas";
   const filename = `${atlasName}.png`;
 
-  const a = document.createElement("a");
-  a.href = dataURL;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  triggerDownload(dataURL, filename, "image/png");
 }
 
 function wireUI() {
@@ -1161,17 +1168,12 @@ function wireUI() {
             "animation";
           const filename = `${atlasName}.gif`;
 
-          // Use FileReader to convert blob to data URL for more reliable downloads
+          // Use FileReader to convert blob to data URL
           const reader = new FileReader();
           reader.onload = (e) => {
             if (e.target?.result) {
               const url = e.target.result as string;
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = filename;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
+              triggerDownload(url, filename, "image/gif");
             }
           };
           reader.onerror = () => {
