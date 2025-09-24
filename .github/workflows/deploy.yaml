@@ -103,7 +103,7 @@ jobs:
               <platform name="android">
                   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
               </platform>
-              <hook src="../cordova_hooks/copy_android_files.js" type="before_build" />
+              <hook src="../cordova_hooks/copy_android_files.cjs" type="before_build" />
           </widget>
           EOF
           rm -rf cordova/www/*
