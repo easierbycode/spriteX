@@ -560,7 +560,7 @@ export function createAtlasJson(
       version: "1.0",
       image: "atlas.png",
       format: "RGBA8888",
-      size: { w: actualWidth, h: currentY + rowHeight },
+      size: { w: packingWidth, h: currentY + rowHeight },
       scale: "1",
     },
   };
@@ -812,3 +812,18 @@ export default {
   hexToRgb,
   rgbToHex,
 };
+
+/** Calculate the actual width of the content in an atlas */
+export function getAtlasActualWidth(atlasJson: any): number {
+  const frames = atlasJson?.frames;
+  if (!frames) return 0;
+
+  let maxWidth = 0;
+  for (const key in frames) {
+    const frame = frames[key]?.frame;
+    if (frame) {
+      maxWidth = Math.max(maxWidth, frame.x + frame.w);
+    }
+  }
+  return maxWidth;
+}

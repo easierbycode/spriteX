@@ -14,6 +14,7 @@ import {
   fetchCharacter,
   rgbToHex,
   hexToRgb,
+  getAtlasActualWidth,
   type DetectedSprite,
   type RGB,
   type SpriteData,
@@ -480,6 +481,13 @@ async function buildAtlasAndPreview() {
   (img as any)._atlasJson = json;
   (img as any)._atlasDataURL = dataURL;
 
+  const trimBtn = $("trimAtlasBtn") as HTMLButtonElement;
+  if (json?.meta?.size?.w === 2048) {
+      trimBtn.style.display = 'inline-block';
+  } else {
+      trimBtn.style.display = 'none';
+  }
+
   $("saveAtlasFirebaseBtn")!.removeAttribute("disabled");
   $("downloadAtlasJsonBtn")!.removeAttribute("disabled");
   $("downloadAtlasPngBtn")!.removeAttribute("disabled");
@@ -819,6 +827,14 @@ async function loadAtlasAndPreview() {
     (img as any)._atlasJson = json;
     (img as any)._atlasDataURL = dataURL;
 
+    const trimBtn = $("trimAtlasBtn") as HTMLButtonElement;
+    if (json?.meta?.size?.w === 2048) {
+        trimBtn.style.display = 'inline-block';
+    } else {
+        trimBtn.style.display = 'none';
+    }
+
+    $("saveAtlasFirebaseBtn")!.removeAttribute("disabled");
     $("downloadAtlasJsonBtn")!.removeAttribute("disabled");
     $("downloadAtlasPngBtn")!.removeAttribute("disabled");
 
@@ -1012,6 +1028,58 @@ function downloadAtlasPng() {
   triggerDownload(dataURL, filename, "image/png");
 }
 
+async function trimCurrentAtlas() {
+    const img = $("atlasPreviewImg") as HTMLImageElement;
+    const json = (img as any)._atlasJson;
+    const dataURL = (img as any)._atlasDataURL;
+
+    if (!json || !dataURL) {
+        alert("No atlas loaded to trim.");
+        return;
+    }
+
+    const actualWidth = getAtlasActualWidth(json);
+    const originalWidth = json.meta.size.w;
+
+    if (actualWidth === 0 || actualWidth >= originalWidth) {
+        alert("Atlas is already at its optimal width or cannot be trimmed.");
+        return;
+    }
+
+    const originalHeight = json.meta.size.h;
+
+    // Create a new canvas with the trimmed width
+    const trimmedCanvas = document.createElement('canvas');
+    trimmedCanvas.width = actualWidth;
+    trimmedCanvas.height = originalHeight;
+    const trimmedCtx = trimmedCanvas.getContext('2d')!;
+
+    // Draw the old atlas image onto the new, smaller canvas
+    const atlasImage = new Image();
+    await new Promise(resolve => {
+        atlasImage.onload = resolve;
+        atlasImage.src = dataURL;
+    });
+    trimmedCtx.drawImage(atlasImage, 0, 0);
+
+    // Get the new data URL
+    const trimmedDataURL = trimmedCanvas.toDataURL('image/png');
+
+    // Update the JSON metadata
+    const newJson = JSON.parse(JSON.stringify(json)); // Deep copy
+    newJson.meta.size.w = actualWidth;
+
+    // Update the UI
+    img.src = trimmedDataURL;
+    (img as any)._atlasJson = newJson;
+    (img as any)._atlasDataURL = trimmedDataURL;
+
+    // Hide the trim button as it's no longer needed
+    ($("trimAtlasBtn") as HTMLButtonElement).style.display = 'none';
+
+    alert(`Atlas trimmed from ${originalWidth}px to ${actualWidth}px wide. You can now save the trimmed version.`);
+}
+
 function wireUI() {
   ($("btnAddUrl") as HTMLButtonElement).addEventListener("click", async () => {
     const val = ($("fileUrl") as HTMLInputElement).value.trim();
@@ -1053,6 +1121,11 @@ function wireUI() {
   ($("buildAtlasBtn") as HTMLButtonElement).addEventListener(
     "click",
     buildAtlasAndPreview
+  );
+
+  ($("trimAtlasBtn") as HTMLButtonElement).addEventListener(
+    "click",
+    trimCurrentAtlas
   );
 
   ($("saveAtlasFirebaseBtn") as HTMLButtonElement).addEventListener(
