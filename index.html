@@ -219,8 +219,8 @@
         border-color: var(--link-color);
       }
       .preview-container {
-        width: 128px;
-        height: 128px;
+        width: 256px;
+        height: 256px;
         border: 1px solid var(--panel-border);
         display: flex;
         align-items: center;
@@ -234,9 +234,10 @@
         background-position: 0 0, 5px 5px;
       }
       .preview-img {
-        max-width: 100%;
-        max-height: 100%;
+        max-width: 50%;
+        max-height: 50%;
         object-fit: contain;
+        transform: scale(2);
       }
       .btn {
         padding: 8px 12px;
@@ -304,7 +305,6 @@
         <label for="bgColorInput">BG</label>
         <input id="bgColorInput" type="color" value="#000000" />
         <button id="bgColorPickBtn" class="btn" title="Pick background from canvas">Pick BG</button>
-        <span id="bgStatus" style="display: none; font-style: italic; color: var(--tip-text);">Transparent</span>
 
         <!-- Erase Color Controls -->
         <label for="eraseColorInput">Erase</label>
@@ -351,7 +351,7 @@
             </select>
         </div>
         <div class="row" style="margin-top: 8px">
-            <div id="spritePreviewContainer" class="preview-container bg-checkered">
+            <div id="spritePreviewContainer" class="preview-container">
                 <img id="spritePreviewImg" class="preview-img" alt="Sprite Preview" />
             </div>
         </div>
@@ -372,7 +372,7 @@
           <button id="selectionFullscreenBtn" class="btn">Fullscreen</button>
         </div>
         <div class="row" style="margin-top: 8px">
-          <div id="selectionPreviewContainer" class="preview-container bg-checkered">
+          <div id="selectionPreviewContainer" class="preview-container">
             <img
               id="selectionPreviewImg"
               class="preview-img"
@@ -459,7 +459,7 @@
           </button>
         </div>
         <div class="row" style="margin-top: 8px">
-          <div id="atlasAnimPreviewContainer" class="preview-container bg-checkered">
+          <div id="atlasAnimPreviewContainer" class="preview-container">
             <img
               id="atlasAnimPreviewImg"
               class="preview-img"
@@ -484,7 +484,7 @@
         <button id="characterFullscreenBtn" class="btn">Fullscreen</button>
       </div>
       <div class="row" style="margin-top: 8px">
-          <div id="characterPreviewContainer" class="preview-container bg-checkered">
+          <div id="characterPreviewContainer" class="preview-container">
             <img
               id="characterPreviewImg"
               class="preview-img"
