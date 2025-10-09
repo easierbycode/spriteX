@@ -375,6 +375,14 @@ async function loadFromURL(url: string) {
   drawOverlay();
   renderSelectedThumbs();
   onSelectionChanged();
+
+  // Reset BG controls to default state when a new image is loaded.
+  const bgInput = $("bgColorInput") as HTMLInputElement;
+  const bgPickBtn = $("bgColorPickBtn") as HTMLButtonElement;
+  const bgStatus = $("bgStatus") as HTMLSpanElement;
+  bgInput.disabled = false;
+  bgPickBtn.disabled = false;
+  bgStatus.style.display = "none";
 }
 
 async function loadFromFile(file: File) {
@@ -402,8 +410,21 @@ function runDetect(explicitBg?: RGB | null) {
   selected = new Set();
 
   const bgInput = $("bgColorInput") as HTMLInputElement;
-  if (detectedBg && bgInput) {
-    bgInput.value = rgbToHex(detectedBg);
+  const bgPickBtn = $("bgColorPickBtn") as HTMLButtonElement;
+  const bgStatus = $("bgStatus") as HTMLSpanElement;
+
+  if (res.bgColor) {
+    // Opaque image with a detected background color.
+    bgInput.value = rgbToHex(res.bgColor);
+    bgInput.disabled = false;
+    bgPickBtn.disabled = false;
+    bgStatus.style.display = "none";
+  } else {
+    // Image has transparency, detection will be based on alpha.
+    bgInput.value = "#000000"; // Reset to default, but disable.
+    bgInput.disabled = true;
+    bgPickBtn.disabled = true;
+    bgStatus.style.display = "inline";
   }
 
   drawOverlay();

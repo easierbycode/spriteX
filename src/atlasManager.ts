@@ -472,13 +472,26 @@ export function smartDetectSprites(
   const imageData = ctx.getImageData(0, 0, width, height);
 
   let hasTransparency = false;
+  // Check for any pixel that is not fully opaque.
   for (let i = 3; i < imageData.data.length; i += 4) {
-    if (imageData.data[i] <= 1) {
+    if (imageData.data[i] < 255) {
       hasTransparency = true;
       break;
     }
   }
 
+  // If the image has inherent transparency, rely on the alpha channel.
+  // Bypass color detection and keying entirely.
+  if (hasTransparency) {
+    const sprites = detectSpritesFromImageData(imageData, {
+      alphaThreshold: 1, // Treat fully transparent pixels as background
+      minArea: 2,
+      use8Conn: false,
+    });
+    return { sprites, bgColor: null, tolerance: 0, usedKeyOut: false };
+  }
+
+  // --- Fallback for fully opaque images ---
   const { dominant, distances } = sampleBorderDominant(imageData);
   const computedBg = explicitBg ?? dominant ?? null;
   const tolerance = computeAdaptiveTolerance(distances, 6, 48);
@@ -490,11 +503,8 @@ export function smartDetectSprites(
   );
 
   let usedKeyOut = false;
-  if (computedBg && !hasTransparency) {
+  if (computedBg) {
     keyOutBackground(workData, computedBg, tolerance);
-    usedKeyOut = true;
-  } else if (computedBg && hasTransparency) {
-    keyOutBackground(workData, computedBg, Math.max(4, Math.floor(tolerance / 2)));
     usedKeyOut = true;
   }
 
