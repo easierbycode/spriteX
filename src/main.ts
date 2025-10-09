@@ -421,7 +421,7 @@ function runDetect(explicitBg?: RGB | null) {
     bgStatus.style.display = "none";
   } else {
     // Image has transparency, detection will be based on alpha.
-    bgInput.value = "#000000"; // Reset to default, but disable.
+    bgInput.value = "#cccccc"; // Use a neutral gray for the disabled state.
     bgInput.disabled = true;
     bgPickBtn.disabled = true;
     bgStatus.style.display = "inline";
