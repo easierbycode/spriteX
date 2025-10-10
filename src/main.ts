@@ -1468,14 +1468,28 @@ function setupPWA() {
   let deferredPrompt: any;
   const installBtn = $('installBtn') as HTMLButtonElement;
 
+  // Check if the app is already installed and running in standalone mode
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+  if (isStandalone) {
+    console.log('App is running in standalone mode, hiding install button.');
+    installBtn.style.display = 'none';
+    return;
+  }
+
   window.addEventListener('beforeinstallprompt', (e) => {
+    // Prevent the mini-infobar from appearing on mobile
     e.preventDefault();
+    // Stash the event so it can be triggered later.
     deferredPrompt = e;
+    // Update the install button visibility
     installBtn.style.display = 'block';
 
     installBtn.addEventListener('click', () => {
+      // Hide the install button
       installBtn.style.display = 'none';
+      // Show the install prompt
       deferredPrompt.prompt();
+      // Wait for the user to respond to the prompt
       deferredPrompt.userChoice.then((choiceResult: any) => {
         if (choiceResult.outcome === 'accepted') {
           console.log('User accepted the install prompt');
@@ -1485,6 +1499,13 @@ function setupPWA() {
         deferredPrompt = null;
       });
     });
+  });
+
+  // Also hide the button if the app is installed
+  window.addEventListener('appinstalled', () => {
+    console.log('App was installed.');
+    installBtn.style.display = 'none';
+    deferredPrompt = null;
   });
 }
 
