@@ -608,16 +608,48 @@ async function startAtlasPreview() {
   const fps = Math.max(1, Math.min(60, Number(fpsInput?.value || 6)));
   const dur = Math.round(1000 / fps);
 
+  const scale = Number(($("gifScaleInput") as HTMLSelectElement)?.value || 1);
+
   const selectedFrames = [...atlasSelectedFrameIndices]
     .sort((a, b) => a - b)
     .map((i) => atlasFrames[i]);
 
   atlasAnimFrameIndex = 0;
 
-  await setContainerSize(
-    $("atlasAnimPreviewContainer") as HTMLElement,
-    selectedFrames
-  );
+  const container = $("atlasAnimPreviewContainer") as HTMLElement;
+  if (container) {
+    if (!selectedFrames.length) {
+      container.style.width = "";
+      container.style.height = "";
+    } else {
+      const imageSizes = await Promise.all(
+        selectedFrames.map(
+          (src) =>
+            new Promise<{ width: number; height: number }>((resolve) => {
+              const img = new Image();
+              img.onload = () =>
+                resolve({
+                  width: img.naturalWidth,
+                  height: img.naturalHeight,
+                });
+              img.onerror = () => resolve({ width: 0, height: 0 });
+              img.src = src;
+            })
+        )
+      );
+
+      const maxWidth = Math.max(0, ...imageSizes.map((s) => s.width));
+      const maxHeight = Math.max(0, ...imageSizes.map((s) => s.height));
+
+      if (maxWidth > 0 && maxHeight > 0) {
+        container.style.width = `${maxWidth * scale}px`;
+        container.style.height = `${maxHeight * scale}px`;
+      } else {
+        container.style.width = "";
+        container.style.height = "";
+      }
+    }
+  }
 
   const img = $("atlasAnimPreviewImg") as HTMLImageElement | null;
   if (!selectedFrames.length || !img) {
