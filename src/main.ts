@@ -187,6 +187,8 @@ function drawOverlay() {
       : "rgba(255,0,0,0.85)";
     overlayCtx.strokeRect(s.x + 0.5, s.y + 0.5, s.w - 1, s.h - 1);
   }
+  // Add a data attribute to signal test scripts that drawing is complete.
+  overlayCanvas.dataset.drawn = String(detected.length);
 }
 
 function renderSelectedThumbs() {
@@ -263,13 +265,18 @@ function stopSelectionPreview() {
   if (btn) btn.textContent = "Preview Selected";
 }
 
-function startSelectionPreview() {
+async function startSelectionPreview() {
   const fpsInput = $("selectionFpsInput") as HTMLInputElement | null;
   const fps = Math.max(1, Math.min(60, Number(fpsInput?.value || 6)));
   const dur = Math.round(1000 / fps);
 
   selectionFrames = collectSelectionFrames();
   selectionFrameIndex = 0;
+
+  await setContainerSize(
+    $("selectionPreviewContainer") as HTMLElement,
+    selectionFrames
+  );
 
   const img = $("selectionPreviewImg") as HTMLImageElement | null;
   if (!selectionFrames.length || !img) {
@@ -289,14 +296,14 @@ function startSelectionPreview() {
   if (btn) btn.textContent = "Stop Preview";
 }
 
-function refreshSelectionPreviewFrames(keepPlaying = true) {
+async function refreshSelectionPreviewFrames(keepPlaying = true) {
   // Update frames and restart timer if we were playing
   const img = $("selectionPreviewImg") as HTMLImageElement | null;
   selectionFrames = collectSelectionFrames();
   selectionFrameIndex = 0;
   if (img) img.src = selectionFrames[0] || "";
   if (selectionPlaying && keepPlaying) {
-    startSelectionPreview();
+    await startSelectionPreview();
   }
 }
 
@@ -596,14 +603,21 @@ function stopAtlasPreview() {
   if (btn) btn.textContent = "Preview Atlas Anim";
 }
 
-function startAtlasPreview() {
+async function startAtlasPreview() {
   const fpsInput = $("atlasFpsInput") as HTMLInputElement | null;
   const fps = Math.max(1, Math.min(60, Number(fpsInput?.value || 6)));
   const dur = Math.round(1000 / fps);
 
-  const selectedFrames = [...atlasSelectedFrameIndices].sort((a,b) => a-b).map(i => atlasFrames[i]);
+  const selectedFrames = [...atlasSelectedFrameIndices]
+    .sort((a, b) => a - b)
+    .map((i) => atlasFrames[i]);
 
   atlasAnimFrameIndex = 0;
+
+  await setContainerSize(
+    $("atlasAnimPreviewContainer") as HTMLElement,
+    selectedFrames
+  );
 
   const img = $("atlasAnimPreviewImg") as HTMLImageElement | null;
   if (!selectedFrames.length || !img) {
@@ -897,6 +911,11 @@ async function loadCharacterAndPreview() {
     return;
   }
 
+  await setContainerSize(
+    $("characterPreviewContainer") as HTMLElement,
+    res.frames
+  );
+
   lastCharPreview = res; // Save for PNG download
   const fps = res.frameRate || 6;
   const dur = Math.max(1, Math.round(1000 / fps));
@@ -946,6 +965,44 @@ function triggerDownload(url: string, filename: string, mimeType: string) {
 function downloadFile(filename: string, content: string, type: string) {
   const url = `data:${type};charset=utf-8,${encodeURIComponent(content)}`;
   triggerDownload(url, filename, type);
+}
+
+/**
+ * Calculates the max dimensions of a set of images and resizes a container to fit.
+ * @param container The container element to resize.
+ * @param sources A list of image data URLs.
+ */
+async function setContainerSize(container: HTMLElement, sources: string[]) {
+  if (!container) return;
+
+  // If there are no sources, reset the container to its default min-size.
+  if (!sources.length) {
+    container.style.width = "";
+    container.style.height = "";
+    return;
+  }
+
+  const imageSizes = await Promise.all(
+    sources.map(src => new Promise<{width: number, height: number}>(resolve => {
+      const img = new Image();
+      img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+      img.onerror = () => resolve({ width: 0, height: 0 }); // Resolve with 0 on error
+      img.src = src;
+    }))
+  );
+
+  const maxWidth = Math.max(0, ...imageSizes.map(s => s.width));
+  const maxHeight = Math.max(0, ...imageSizes.map(s => s.height));
+
+  // Apply the calculated max dimensions to the container if valid.
+  if (maxWidth > 0 && maxHeight > 0) {
+    container.style.width = `${maxWidth}px`;
+    container.style.height = `${maxHeight}px`;
+  } else {
+    // Reset if no valid images were found
+    container.style.width = "";
+    container.style.height = "";
+  }
 }
 
 async function downloadCharacterJson() {
@@ -1202,20 +1259,27 @@ function wireUI() {
 
   const spritePreviewSelect = $("spritePreviewSelect") as HTMLSelectElement | null;
   if (spritePreviewSelect) {
-    spritePreviewSelect.addEventListener("change", () => {
-        const key = spritePreviewSelect.value;
-        const img = $("spritePreviewImg") as HTMLImageElement;
-        if (!key || !img) {
-            if (img) img.src = '';
-            return;
-        }
+    spritePreviewSelect.addEventListener("change", async () => {
+      const key = spritePreviewSelect.value;
+      const img = $("spritePreviewImg") as HTMLImageElement;
+      if (!key || !img) {
+        if (img) img.src = "";
+        await setContainerSize($("spritePreviewContainer") as HTMLElement, []);
+        return;
+      }
 
-        const spriteData = dbSprites[key];
-        if (typeof spriteData === 'string') {
-            img.src = ensureDataURL(spriteData);
-        } else if (spriteData?.png) {
-            img.src = ensureDataURL(spriteData.png);
-        }
+      const spriteData = dbSprites[key];
+      let src = "";
+      if (typeof spriteData === "string") {
+        src = ensureDataURL(spriteData);
+      } else if (spriteData?.png) {
+        src = ensureDataURL(spriteData.png);
+      }
+      img.src = src;
+      await setContainerSize(
+        $("spritePreviewContainer") as HTMLElement,
+        src ? [src] : []
+      );
     });
   }
 
