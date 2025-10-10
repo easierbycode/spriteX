@@ -617,45 +617,17 @@ async function startAtlasPreview() {
   atlasAnimFrameIndex = 0;
 
   const container = $("atlasAnimPreviewContainer") as HTMLElement;
-  if (container) {
-    if (!selectedFrames.length) {
-      container.style.width = "";
-      container.style.height = "";
-    } else {
-      const imageSizes = await Promise.all(
-        selectedFrames.map(
-          (src) =>
-            new Promise<{ width: number; height: number }>((resolve) => {
-              const img = new Image();
-              img.onload = () =>
-                resolve({
-                  width: img.naturalWidth,
-                  height: img.naturalHeight,
-                });
-              img.onerror = () => resolve({ width: 0, height: 0 });
-              img.src = src;
-            })
-        )
-      );
+  await setContainerSize(container, selectedFrames, scale);
 
-      const maxWidth = Math.max(0, ...imageSizes.map((s) => s.width));
-      const maxHeight = Math.max(0, ...imageSizes.map((s) => s.height));
-
-      if (maxWidth > 0 && maxHeight > 0) {
-        container.style.width = `${maxWidth * scale}px`;
-        container.style.height = `${maxHeight * scale}px`;
-      } else {
-        container.style.width = "";
-        container.style.height = "";
-      }
-    }
-  }
 
   const img = $("atlasAnimPreviewImg") as HTMLImageElement | null;
   if (!selectedFrames.length || !img) {
     stopAtlasPreview();
     return;
   }
+
+  img.style.transform = `scale(${scale})`;
+  img.style.transformOrigin = "top left";
 
   // --- GIF generation ---
   generateAtlasGif(selectedFrames, fps);
@@ -1004,7 +976,11 @@ function downloadFile(filename: string, content: string, type: string) {
  * @param container The container element to resize.
  * @param sources A list of image data URLs.
  */
-async function setContainerSize(container: HTMLElement, sources: string[]) {
+async function setContainerSize(
+  container: HTMLElement,
+  sources: string[],
+  scale = 1
+) {
   if (!container) return;
 
   // If there are no sources, reset the container to its default min-size.
@@ -1015,21 +991,25 @@ async function setContainerSize(container: HTMLElement, sources: string[]) {
   }
 
   const imageSizes = await Promise.all(
-    sources.map(src => new Promise<{width: number, height: number}>(resolve => {
-      const img = new Image();
-      img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-      img.onerror = () => resolve({ width: 0, height: 0 }); // Resolve with 0 on error
-      img.src = src;
-    }))
+    sources.map(
+      (src) =>
+        new Promise<{ width: number; height: number }>((resolve) => {
+          const img = new Image();
+          img.onload = () =>
+            resolve({ width: img.naturalWidth, height: img.naturalHeight });
+          img.onerror = () => resolve({ width: 0, height: 0 }); // Resolve with 0 on error
+          img.src = src;
+        })
+    )
   );
 
-  const maxWidth = Math.max(0, ...imageSizes.map(s => s.width));
-  const maxHeight = Math.max(0, ...imageSizes.map(s => s.height));
+  const maxWidth = Math.max(0, ...imageSizes.map((s) => s.width));
+  const maxHeight = Math.max(0, ...imageSizes.map((s) => s.height));
 
   // Apply the calculated max dimensions to the container if valid.
   if (maxWidth > 0 && maxHeight > 0) {
-    container.style.width = `${maxWidth}px`;
-    container.style.height = `${maxHeight}px`;
+    container.style.width = `${maxWidth * scale}px`;
+    container.style.height = `${maxHeight * scale}px`;
   } else {
     // Reset if no valid images were found
     container.style.width = "";
