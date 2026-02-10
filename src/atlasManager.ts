@@ -525,6 +525,18 @@ export function createAtlasJson(
   sprites: Record<string, { width: number; height: number }>
 ): any {
   const frames: any = {};
+  const allDimensions = Object.values(sprites);
+  const cellWidth = allDimensions.reduce(
+    (max, d) => Math.max(max, d.width),
+    0
+  );
+  const cellHeight = allDimensions.reduce(
+    (max, d) => Math.max(max, d.height),
+    0
+  );
+  const frameWidth = Math.max(1, cellWidth);
+  const frameHeight = Math.max(1, cellHeight);
+
   let currentX = 0;
   let currentY = 0;
   let rowHeight = 0;
@@ -532,33 +544,36 @@ export function createAtlasJson(
   const packingWidth = 2048;
 
   Object.entries(sprites).forEach(([name, dimensions]) => {
-    if (currentX + dimensions.width > packingWidth) {
+    if (currentX + frameWidth > packingWidth) {
       actualWidth = Math.max(actualWidth, currentX);
       currentX = 0;
       currentY += rowHeight;
       rowHeight = 0;
     }
 
+    const offsetX = Math.floor((frameWidth - dimensions.width) / 2);
+    const offsetY = Math.floor((frameHeight - dimensions.height) / 2);
+
     frames[name] = {
       frame: {
         x: currentX,
         y: currentY,
-        w: dimensions.width,
-        h: dimensions.height,
+        w: frameWidth,
+        h: frameHeight,
       },
       rotated: false,
       trimmed: false,
       spriteSourceSize: {
-        x: 0,
-        y: 0,
+        x: offsetX,
+        y: offsetY,
         w: dimensions.width,
         h: dimensions.height,
       },
-      sourceSize: { w: dimensions.width, h: dimensions.height },
+      sourceSize: { w: frameWidth, h: frameHeight },
     };
 
-    currentX += dimensions.width;
-    rowHeight = Math.max(rowHeight, dimensions.height);
+    currentX += frameWidth;
+    rowHeight = Math.max(rowHeight, frameHeight);
   });
 
   actualWidth = Math.max(actualWidth, currentX);
@@ -595,7 +610,9 @@ export async function createAtlasPng(
       img.onload = () => {
         const frame = atlasJson.frames[name];
         if (frame) {
-          ctx.drawImage(img, frame.frame.x, frame.frame.y);
+          const drawX = frame.frame.x + (frame.spriteSourceSize?.x ?? 0);
+          const drawY = frame.frame.y + (frame.spriteSourceSize?.y ?? 0);
+          ctx.drawImage(img, drawX, drawY);
         }
         resolve();
       };
