@@ -47,6 +47,7 @@ let atlasFrames: string[] = []; // All frames extracted from atlas
 let atlasSelectedFrameIndices = new Set<number>();
 let atlasAnimFrameIndex = 0;
 let atlasAnimPlaying = false;
+let atlasReorderEnabled = false;
 
 // BG color eyedropper state
 let bgPickActive = false;
@@ -858,6 +859,51 @@ async function buildAtlasAndPreview() {
   });
 }
 
+function remapSelectedFrameIndicesAfterMove(
+  selectedIndices: Set<number>,
+  length: number,
+  from: number,
+  to: number
+): Set<number> {
+  if (
+    from < 0 ||
+    to < 0 ||
+    from >= length ||
+    to >= length ||
+    from === to
+  ) {
+    return new Set(selectedIndices);
+  }
+
+  const order = Array.from({ length }, (_, i) => i);
+  const [moved] = order.splice(from, 1);
+  order.splice(to, 0, moved);
+
+  const oldToNew = new Map<number, number>();
+  order.forEach((oldIndex, newIndex) => {
+    oldToNew.set(oldIndex, newIndex);
+  });
+
+  const nextSelected = new Set<number>();
+  selectedIndices.forEach((oldIndex) => {
+    const mapped = oldToNew.get(oldIndex);
+    if (typeof mapped === "number") nextSelected.add(mapped);
+  });
+
+  return nextSelected;
+}
+
+function toggleAtlasReorder() {
+  atlasReorderEnabled = !atlasReorderEnabled;
+  const btn = $("reorderAtlasFramesBtn") as HTMLButtonElement | null;
+  if (btn) {
+    btn.classList.toggle("active", atlasReorderEnabled);
+    btn.setAttribute("aria-pressed", String(atlasReorderEnabled));
+    btn.textContent = atlasReorderEnabled ? "✓ Reorder" : "↕ Reorder";
+  }
+  renderAtlasFrames();
+}
+
 function renderAtlasFrames() {
   const cont = $("atlasFramesContainer") as HTMLDivElement;
   cont.innerHTML = "";
@@ -874,6 +920,8 @@ function renderAtlasFrames() {
     img.style.height = "auto";
     img.style.margin = "4px";
     img.dataset.frameIndex = String(index);
+    img.draggable = atlasReorderEnabled;
+    img.style.cursor = atlasReorderEnabled ? "grab" : "pointer";
 
     if (atlasSelectedFrameIndices.has(index)) {
       img.classList.add("selected");
@@ -889,6 +937,44 @@ function renderAtlasFrames() {
       }
       refreshAtlasPreviewFrames(false); // Update preview but don't start playing
     });
+
+    if (atlasReorderEnabled) {
+      img.addEventListener("dragstart", (ev) => {
+        img.style.opacity = "0.45";
+        ev.dataTransfer?.setData("text/plain", String(index));
+        if (ev.dataTransfer) ev.dataTransfer.effectAllowed = "move";
+      });
+
+      img.addEventListener("dragend", () => {
+        img.style.opacity = "1";
+      });
+
+      img.addEventListener("dragover", (ev) => {
+        ev.preventDefault();
+        if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+      });
+
+      img.addEventListener("drop", (ev) => {
+        ev.preventDefault();
+        const from = Number(ev.dataTransfer?.getData("text/plain"));
+        const to = index;
+
+        if (!Number.isFinite(from) || from === to) return;
+        if (from < 0 || from >= atlasFrames.length || to < 0 || to >= atlasFrames.length) return;
+
+        const moved = atlasFrames.splice(from, 1)[0];
+        atlasFrames.splice(to, 0, moved);
+        atlasSelectedFrameIndices = remapSelectedFrameIndicesAfterMove(
+          atlasSelectedFrameIndices,
+          atlasFrames.length,
+          from,
+          to
+        );
+
+        renderAtlasFrames();
+        refreshAtlasPreviewFrames(false);
+      });
+    }
 
     cont.appendChild(img);
   });
@@ -1585,6 +1671,11 @@ function wireUI() {
     "change",
     loadAtlasAndPreview
   );
+
+  const reorderBtn = $("reorderAtlasFramesBtn") as HTMLButtonElement | null;
+  if (reorderBtn) {
+    reorderBtn.addEventListener("click", toggleAtlasReorder);
+  }
 
   // Selection preview controls
   const selBtn = $("selectionPreviewBtn") as HTMLButtonElement | null;

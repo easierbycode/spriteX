@@ -218,6 +218,11 @@
       #atlasFramesContainer img.selected {
         border-color: var(--link-color);
       }
+      #reorderAtlasFramesBtn.active {
+        background-color: var(--link-color);
+        border-color: var(--link-color);
+        color: #fff;
+      }
       .preview-container {
         min-width: 128px;
         min-height: 128px;
@@ -437,7 +442,10 @@
         </div>
         <div>Atlases saved as atlases/{name} with json + png (DataURL).</div>
 
-        <div class="subtitle" style="margin-top: 12px">Atlas Frames</div>
+        <div class="row" style="margin-top: 12px; align-items: center; gap: 8px;">
+          <div class="subtitle" style="margin-top: 0; margin-bottom: 0;">Atlas Frames</div>
+          <button id="reorderAtlasFramesBtn" class="btn" type="button" title="Enable/disable frame reordering" style="padding: 4px 8px;" aria-pressed="false">↕ Reorder</button>
+        </div>
         <div id="atlasFramesContainer" class="row" style="padding: 4px; border: 1px solid var(--panel-border); min-height: 50px;">
           Atlas not built yet.
         </div>
