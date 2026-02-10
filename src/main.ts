@@ -941,11 +941,8 @@ function renderAtlasFrames() {
     if (atlasReorderEnabled) {
       img.addEventListener("dragstart", (ev) => {
         img.style.opacity = "0.45";
-        if (ev.dataTransfer) {
-          ev.dataTransfer.setData("application/x-atlas-frame-index", String(index));
-          ev.dataTransfer.setData("text/plain", String(index));
-          ev.dataTransfer.effectAllowed = "move";
-        }
+        ev.dataTransfer?.setData("text/plain", String(index));
+        if (ev.dataTransfer) ev.dataTransfer.effectAllowed = "move";
       });
 
       img.addEventListener("dragend", () => {
@@ -959,13 +956,7 @@ function renderAtlasFrames() {
 
       img.addEventListener("drop", (ev) => {
         ev.preventDefault();
-        const rawFrom =
-          ev.dataTransfer?.getData("application/x-atlas-frame-index") ||
-          ev.dataTransfer?.getData("text/plain") ||
-          "";
-        if (!/^\d+$/.test(rawFrom)) return;
-
-        const from = Number(rawFrom);
+        const from = Number(ev.dataTransfer?.getData("text/plain"));
         const to = index;
 
         if (!Number.isFinite(from) || from === to) return;
