@@ -64,6 +64,9 @@ let canvasZoom = 1;
 // Data state
 let dbSprites: Record<string, string | SpriteData> = {};
 
+type BuilderMode = "atlas" | "font";
+
+
 function $(id: string) {
   return document.getElementById(id);
 }
@@ -483,6 +486,55 @@ async function saveSelectedSpritesToFirebase() {
   alert(`Saved ${selected.size} sprites to Firebase (sprites/*).`);
 }
 
+function getBuilderMode(): BuilderMode {
+  const select = $("builderTypeSelect") as HTMLSelectElement | null;
+  const val = (select?.value || "atlas").toLowerCase();
+  return val === "font" ? "font" : "atlas";
+}
+
+function getFontConfigText(name: string, json: any): string {
+  const frame = Object.values(json?.frames || {})[0] as any;
+  const width = frame?.frame?.w || 16;
+  const height = frame?.frame?.h || 16;
+  const imageName = (name || "font_sheet").trim();
+
+  return `{
+  image: "${imageName}",
+  height: ${height},
+  width: ${width},
+
+  chars: Phaser.GameObjects.RetroFont.TEXT_SET3
+}`;
+}
+
+function applyBuilderModeUI(mode: BuilderMode) {
+  const spriteSaveSubtitle = $("spriteSaveSubtitle");
+  const builderSubtitle = $("builderSubtitle");
+  const spritePrefixInput = $("spriteNamePrefix") as HTMLInputElement | null;
+  const atlasNameInput = $("atlasNameInput") as HTMLInputElement | null;
+  const buildBtn = $("buildAtlasBtn") as HTMLButtonElement | null;
+  const saveBtn = $("saveAtlasFirebaseBtn") as HTMLButtonElement | null;
+  const downloadJsonBtn = $("downloadAtlasJsonBtn") as HTMLButtonElement | null;
+
+  if (mode === "font") {
+    if (spriteSaveSubtitle) spriteSaveSubtitle.textContent = "Save Glyphs to Firebase";
+    if (builderSubtitle) builderSubtitle.textContent = "Font Builder";
+    if (spritePrefixInput) spritePrefixInput.placeholder = "Glyph name prefix (e.g., gold_font)";
+    if (atlasNameInput) atlasNameInput.placeholder = "Font sheet name (e.g., gold_font)";
+    if (buildBtn) buildBtn.textContent = "Build Font Sheet";
+    if (saveBtn) saveBtn.textContent = "Save Font Sheet (RTDB)";
+    if (downloadJsonBtn) downloadJsonBtn.textContent = "Download Font Config";
+  } else {
+    if (spriteSaveSubtitle) spriteSaveSubtitle.textContent = "Save Sprites to Firebase";
+    if (builderSubtitle) builderSubtitle.textContent = "Atlas Builder";
+    if (spritePrefixInput) spritePrefixInput.placeholder = "Sprite name prefix (e.g., enemy)";
+    if (atlasNameInput) atlasNameInput.placeholder = "Atlas name (e.g., enemy_atlas)";
+    if (buildBtn) buildBtn.textContent = "Build Atlas";
+    if (saveBtn) saveBtn.textContent = "Save Atlas (RTDB)";
+    if (downloadJsonBtn) downloadJsonBtn.textContent = "Download JSON";
+  }
+}
+
 async function buildAtlasAndPreview() {
   if (!selected.size) {
     alert("No sprites selected.");
@@ -501,6 +553,7 @@ async function buildAtlasAndPreview() {
     named[`atlas_s${idx++}`] = map[k];
   }
 
+  const mode = getBuilderMode();
   const { dataURL, json } = await buildAtlas(named);
 
   const img = $("atlasPreviewImg") as HTMLImageElement;
@@ -508,6 +561,9 @@ async function buildAtlasAndPreview() {
 
   (img as any)._atlasJson = json;
   (img as any)._atlasDataURL = dataURL;
+  (img as any)._atlasOutputJson = mode === "font"
+    ? getFontConfigText(($("atlasNameInput") as HTMLInputElement)?.value || "font_sheet", json)
+    : json;
 
   const trimBtn = $("trimAtlasBtn") as HTMLButtonElement;
   if (json?.meta?.size?.w === 2048) {
@@ -581,6 +637,7 @@ async function saveAtlasToFirebase() {
 
   const img = $("atlasPreviewImg") as HTMLImageElement;
   const json = (img as any)._atlasJson;
+  const outputJson = (img as any)._atlasOutputJson ?? json;
   const dataURL = (img as any)._atlasDataURL;
 
   if (!json || !dataURL) {
@@ -588,7 +645,7 @@ async function saveAtlasToFirebase() {
     return;
   }
 
-  await saveAtlas(atlasName, { json, png: dataURL });
+  await saveAtlas(atlasName, { json: outputJson, png: dataURL });
   alert(`Atlas "${atlasName}" saved to RTDB (atlases/${atlasName}).`);
   await populateAtlasSelect(); // Refresh atlas list
 }
@@ -865,6 +922,7 @@ async function loadAtlasAndPreview() {
 
     (img as any)._atlasJson = json;
     (img as any)._atlasDataURL = dataURL;
+    (img as any)._atlasOutputJson = json;
 
     const trimBtn = $("trimAtlasBtn") as HTMLButtonElement;
     if (json?.meta?.size?.w === 2048) {
@@ -1096,7 +1154,11 @@ function downloadAtlasJson() {
   const select = $("atlasSelect") as HTMLSelectElement;
   const atlasName = (nameInput?.value.trim()) || (select?.value) || "atlas";
   const filename = `${atlasName}.json`;
-  const content = JSON.stringify(json, null, 2);
+  const outputJson = (img as any)._atlasOutputJson ?? json;
+  const content =
+    typeof outputJson === "string"
+      ? outputJson
+      : JSON.stringify(outputJson, null, 2);
 
   downloadFile(filename, content, "application/json");
 }
@@ -1207,6 +1269,14 @@ function wireUI() {
     "click",
     saveSelectedSpritesToFirebase
   );
+
+  const builderSelect = $("builderTypeSelect") as HTMLSelectElement | null;
+  if (builderSelect) {
+    builderSelect.addEventListener("change", () => {
+      applyBuilderModeUI(getBuilderMode());
+    });
+    applyBuilderModeUI(getBuilderMode());
+  }
 
   ($("buildAtlasBtn") as HTMLButtonElement).addEventListener(
     "click",
