@@ -48,8 +48,6 @@ let atlasSelectedFrameIndices = new Set<number>();
 let atlasAnimFrameIndex = 0;
 let atlasAnimPlaying = false;
 let atlasReorderEnabled = false;
-let atlasOrderDirty = false;
-let atlasSyncPromise: Promise<void> | null = null;
 
 // BG color eyedropper state
 let bgPickActive = false;
@@ -801,51 +799,6 @@ function applyBuilderModeUI(mode: BuilderMode) {
   }
 }
 
-async function syncAtlasPreviewFromFrameOrder() {
-  if (!atlasFrames.length) return;
-
-
-  const named: Record<string, string> = {};
-  atlasFrames.forEach((frameData, i) => {
-    named[`atlas_s${i}`] = frameData;
-  });
-
-  const mode = getBuilderMode();
-  const { dataURL, json } = await buildAtlas(named);
-  const img = $("atlasPreviewImg") as HTMLImageElement;
-  img.src = dataURL;
-  (img as any)._atlasJson = json;
-  (img as any)._atlasDataURL = dataURL;
-  (img as any)._atlasOutputJson =
-    mode === "font"
-      ? getFontConfigText(
-          ($("atlasNameInput") as HTMLInputElement)?.value || "font_sheet",
-          json
-        )
-      : json;
-
-  const trimBtn = $("trimAtlasBtn") as HTMLButtonElement;
-  if (json?.meta?.size?.w === 2048) {
-    trimBtn.style.display = "inline-block";
-  } else {
-    trimBtn.style.display = "none";
-  }
-}
-
-function scheduleAtlasOrderSync(): Promise<void> {
-  if (atlasSyncPromise) return atlasSyncPromise;
-
-  atlasSyncPromise = (async () => {
-    await syncAtlasPreviewFromFrameOrder();
-    atlasOrderDirty = false;
-  })().finally(() => {
-    atlasSyncPromise = null;
-  });
-
-  return atlasSyncPromise;
-}
-
-
 async function buildAtlasAndPreview() {
   if (!selected.size) {
     alert("No sprites selected.");
@@ -948,7 +901,7 @@ function remapSelectedFrameIndicesAfterMove(
   return nextSelected;
 }
 
-async function toggleAtlasReorder() {
+function toggleAtlasReorder() {
   atlasReorderEnabled = !atlasReorderEnabled;
   const btn = $("reorderAtlasFramesBtn") as HTMLButtonElement | null;
   if (btn) {
@@ -957,10 +910,6 @@ async function toggleAtlasReorder() {
     btn.textContent = atlasReorderEnabled ? "✓ Reorder" : "↕ Reorder";
   }
   renderAtlasFrames();
-
-  if (!atlasReorderEnabled && atlasOrderDirty) {
-    await scheduleAtlasOrderSync();
-  }
 }
 
 function renderAtlasFrames() {
@@ -1000,11 +949,8 @@ function renderAtlasFrames() {
     if (atlasReorderEnabled) {
       img.addEventListener("dragstart", (ev) => {
         img.style.opacity = "0.45";
-        if (ev.dataTransfer) {
-          ev.dataTransfer.setData("application/x-atlas-frame-index", String(index));
-          ev.dataTransfer.setData("text/plain", String(index));
-          ev.dataTransfer.effectAllowed = "move";
-        }
+        ev.dataTransfer?.setData("text/plain", String(index));
+        if (ev.dataTransfer) ev.dataTransfer.effectAllowed = "move";
       });
 
       img.addEventListener("dragend", () => {
@@ -1018,13 +964,7 @@ function renderAtlasFrames() {
 
       img.addEventListener("drop", (ev) => {
         ev.preventDefault();
-        const rawFrom =
-          ev.dataTransfer?.getData("application/x-atlas-frame-index") ||
-          ev.dataTransfer?.getData("text/plain") ||
-          "";
-        if (!/^\d+$/.test(rawFrom)) return;
-
-        const from = Number(rawFrom);
+        const from = Number(ev.dataTransfer?.getData("text/plain"));
         const to = index;
 
         if (!Number.isFinite(from) || from === to) return;
@@ -1038,11 +978,9 @@ function renderAtlasFrames() {
           from,
           to
         );
-        atlasOrderDirty = true;
 
         renderAtlasFrames();
         refreshAtlasPreviewFrames(false);
-        void scheduleAtlasOrderSync();
       });
     }
 
