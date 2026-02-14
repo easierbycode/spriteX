@@ -812,9 +812,16 @@ async function buildAtlasAndPreview() {
   });
 
   const named: Record<string, string> = {};
-  let idx = 0;
-  for (const k of Object.keys(map)) {
-    named[`atlas_s${idx++}`] = map[k];
+  if (atlasOrderDirty && atlasFrames.length === Object.keys(map).length) {
+    atlasFrames.forEach((frameData, i) => {
+      named[`atlas_s${i}`] = frameData;
+    });
+  } else {
+    let idx = 0;
+    for (const k of Object.keys(map)) {
+      named[`atlas_s${idx++}`] = map[k];
+    }
+    atlasOrderDirty = false;
   }
 
   const mode = getBuilderMode();
@@ -848,6 +855,7 @@ async function buildAtlasAndPreview() {
     const atlasImg = new Image();
     atlasImg.onload = async () => {
       atlasFrames = await extractFramesFromAtlas(atlasImg, json);
+      atlasOrderDirty = false;
       renderAtlasFrames();
       resolve();
     };
@@ -983,6 +991,13 @@ function renderAtlasFrames() {
 async function saveAtlasToFirebase() {
   const nameInput = $("atlasNameInput") as HTMLInputElement;
   const atlasName = (nameInput?.value || "untitled_atlas").trim();
+
+  if (atlasSyncPromise) {
+    await atlasSyncPromise;
+  }
+  if (atlasOrderDirty) {
+    await scheduleAtlasOrderSync();
+  }
 
   const img = $("atlasPreviewImg") as HTMLImageElement;
   const json = (img as any)._atlasJson;
@@ -1292,6 +1307,7 @@ async function loadAtlasAndPreview() {
         const atlasImg = new Image();
         atlasImg.onload = async () => {
             atlasFrames = await extractFramesFromAtlas(atlasImg, json);
+            atlasOrderDirty = false;
             // Select all frames by default
             atlasSelectedFrameIndices = new Set(atlasFrames.map((_, i) => i));
             renderAtlasFrames();
