@@ -47,6 +47,9 @@ let atlasFrames: string[] = []; // All frames extracted from atlas
 let atlasSelectedFrameIndices = new Set<number>();
 let atlasAnimFrameIndex = 0;
 let atlasAnimPlaying = false;
+let atlasReorderEnabled = false;
+let atlasOrderDirty = false;
+let atlasSyncPromise: Promise<void> | null = null;
 
 // BG color eyedropper state
 let bgPickActive = false;
@@ -63,6 +66,17 @@ let canvasZoom = 1;
 
 // Data state
 let dbSprites: Record<string, string | SpriteData> = {};
+
+type BuilderMode = "atlas" | "font";
+
+type SpriteSplitChoice = {
+  axis: "h" | "v";
+  parts: number;
+};
+
+let splitMenuEl: HTMLDivElement | null = null;
+const spriteSplitChoices = new Map<number, SpriteSplitChoice>();
+let splitLongPressTimer: number | null = null;
 
 function $(id: string) {
   return document.getElementById(id);
@@ -198,11 +212,13 @@ function renderSelectedThumbs() {
   if (!selected.size) {
     cont.textContent =
       'No sprites selected. Tap detected boxes on the canvas to select.';
-    // Clear preview image when nothing selected
     const img = $("selectionPreviewImg") as HTMLImageElement | null;
     if (img) img.src = "";
+    hideSplitMenu();
     return;
   }
+
+  const smallest = getSmallestSelectedDimensions();
 
   selected.forEach((i) => {
     const s = detected[i];
@@ -214,14 +230,62 @@ function renderSelectedThumbs() {
     cctx.imageSmoothingEnabled = false;
     cctx.drawImage(originalCanvas, s.x, s.y, s.w, s.h, 0, 0, s.w, s.h);
 
+    const wrap = document.createElement("div");
+    wrap.style.display = "inline-flex";
+    wrap.style.flexDirection = "column";
+    wrap.style.alignItems = "center";
+    wrap.style.margin = "4px";
+
     const img = document.createElement("img");
     img.src = c.toDataURL("image/png");
     img.style.width = "96px";
     img.style.height = "auto";
     img.style.border = "1px dashed #aaa";
-    img.style.margin = "4px";
+    img.dataset.spriteIndex = String(i);
 
-    cont.appendChild(img);
+    const info = document.createElement("small");
+    info.style.opacity = "0.8";
+    info.style.fontSize = "11px";
+
+    const splitChoice = spriteSplitChoices.get(i);
+    info.textContent = splitChoice
+      ? `Split ${splitChoice.axis === "h" ? "H" : "V"} x${splitChoice.parts}`
+      : "No split";
+
+    const splitOptions = getSplitOptionsForSprite(s, smallest);
+    if (splitOptions.length > 0) {
+      info.title = "Right-click or tap-and-hold to split";
+      img.style.cursor = "context-menu";
+
+      img.addEventListener("contextmenu", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        showSplitMenu(i, ev.clientX, ev.clientY, splitOptions);
+      });
+
+      img.addEventListener("touchstart", (ev) => {
+        if (!ev.touches.length) return;
+        const touch = ev.touches[0];
+        if (splitLongPressTimer) window.clearTimeout(splitLongPressTimer);
+        splitLongPressTimer = window.setTimeout(() => {
+          showSplitMenu(i, touch.clientX, touch.clientY, splitOptions);
+        }, 500);
+      }, { passive: true });
+
+      const clearLongPress = () => {
+        if (splitLongPressTimer) {
+          window.clearTimeout(splitLongPressTimer);
+          splitLongPressTimer = null;
+        }
+      };
+
+      img.addEventListener("touchend", clearLongPress, { passive: true });
+      img.addEventListener("touchcancel", clearLongPress, { passive: true });
+    }
+
+    wrap.appendChild(img);
+    wrap.appendChild(info);
+    cont.appendChild(wrap);
   });
 }
 
@@ -237,10 +301,208 @@ function getSortedSelectedIndices(): number[] {
   return arr;
 }
 
+function getSmallestSelectedDimensions(): { w: number; h: number } {
+  const indices = [...selected];
+  let minW = Number.POSITIVE_INFINITY;
+  let minH = Number.POSITIVE_INFINITY;
+
+  indices.forEach((i) => {
+    const s = detected[i];
+    if (!s) return;
+    minW = Math.min(minW, Math.max(1, s.w));
+    minH = Math.min(minH, Math.max(1, s.h));
+  });
+
+  if (!Number.isFinite(minW) || !Number.isFinite(minH)) {
+    return { w: 1, h: 1 };
+  }
+
+  return { w: minW, h: minH };
+}
+
+function getSplitOptionsForSprite(
+  sprite: DetectedSprite,
+  smallest: { w: number; h: number }
+): SpriteSplitChoice[] {
+  const options: SpriteSplitChoice[] = [];
+  const maxH = Math.floor(sprite.w / Math.max(1, smallest.w));
+  const maxV = Math.floor(sprite.h / Math.max(1, smallest.h));
+
+  for (let n = 2; n <= maxH; n++) options.push({ axis: "h", parts: n });
+  for (let n = 2; n <= maxV; n++) options.push({ axis: "v", parts: n });
+  return options;
+}
+
+function splitSpriteRect(
+  sprite: DetectedSprite,
+  split: SpriteSplitChoice
+): DetectedSprite[] {
+  const parts: DetectedSprite[] = [];
+  if (split.parts < 2) return [sprite];
+
+  if (split.axis === "h") {
+    for (let i = 0; i < split.parts; i++) {
+      const x0 = sprite.x + Math.floor((i * sprite.w) / split.parts);
+      const x1 = sprite.x + Math.floor(((i + 1) * sprite.w) / split.parts);
+      parts.push({ x: x0, y: sprite.y, w: Math.max(1, x1 - x0), h: sprite.h });
+    }
+  } else {
+    for (let i = 0; i < split.parts; i++) {
+      const y0 = sprite.y + Math.floor((i * sprite.h) / split.parts);
+      const y1 = sprite.y + Math.floor(((i + 1) * sprite.h) / split.parts);
+      parts.push({ x: sprite.x, y: y0, w: sprite.w, h: Math.max(1, y1 - y0) });
+    }
+  }
+
+  return parts;
+}
+
+function getSelectedBoxesExpanded(): DetectedSprite[] {
+  const indices = getSortedSelectedIndices();
+  const boxes: DetectedSprite[] = [];
+  const smallest = getSmallestSelectedDimensions();
+
+  indices.forEach((idx) => {
+    const sprite = detected[idx];
+    if (!sprite) return;
+    const split = spriteSplitChoices.get(idx);
+
+    if (!split) {
+      boxes.push(sprite);
+      return;
+    }
+
+    const valid = getSplitOptionsForSprite(sprite, smallest).some(
+      (opt) => opt.axis === split.axis && opt.parts === split.parts
+    );
+
+    if (!valid) {
+      spriteSplitChoices.delete(idx);
+      boxes.push(sprite);
+      return;
+    }
+
+    boxes.push(...splitSpriteRect(sprite, split));
+  });
+
+  return boxes;
+}
+
+function createSplitIcon(axis: "h" | "v", parts: number): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = 48;
+  c.height = 28;
+  const ctx = c.getContext("2d")!;
+  ctx.strokeStyle = "#666";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, c.width - 1, c.height - 1);
+
+  if (axis === "h") {
+    for (let i = 1; i < parts; i++) {
+      const x = Math.round((i * c.width) / parts) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x, 0.5);
+      ctx.lineTo(x, c.height - 0.5);
+      ctx.stroke();
+    }
+  } else {
+    for (let i = 1; i < parts; i++) {
+      const y = Math.round((i * c.height) / parts) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(0.5, y);
+      ctx.lineTo(c.width - 0.5, y);
+      ctx.stroke();
+    }
+  }
+
+  c.style.display = "block";
+  c.style.marginRight = "8px";
+  return c;
+}
+
+function ensureSplitMenu(): HTMLDivElement {
+  if (splitMenuEl) return splitMenuEl;
+  splitMenuEl = document.createElement("div");
+  splitMenuEl.id = "splitMenu";
+  splitMenuEl.style.position = "fixed";
+  splitMenuEl.style.display = "none";
+  splitMenuEl.style.background = "var(--panel-bg)";
+  splitMenuEl.style.border = "1px solid var(--panel-border)";
+  splitMenuEl.style.borderRadius = "8px";
+  splitMenuEl.style.padding = "6px";
+  splitMenuEl.style.zIndex = "2000";
+  splitMenuEl.style.minWidth = "170px";
+  splitMenuEl.style.boxShadow = "0 4px 14px rgba(0,0,0,0.2)";
+  document.body.appendChild(splitMenuEl);
+
+  document.addEventListener("click", () => hideSplitMenu());
+  document.addEventListener("contextmenu", () => hideSplitMenu());
+
+  return splitMenuEl;
+}
+
+function hideSplitMenu() {
+  if (splitMenuEl) splitMenuEl.style.display = "none";
+}
+
+function showSplitMenu(
+  spriteIndex: number,
+  clientX: number,
+  clientY: number,
+  options: SpriteSplitChoice[]
+) {
+  const menu = ensureSplitMenu();
+  menu.innerHTML = "";
+
+  const noneBtn = document.createElement("button");
+  noneBtn.type = "button";
+  noneBtn.className = "btn";
+  noneBtn.textContent = "No split";
+  noneBtn.style.display = "block";
+  noneBtn.style.width = "100%";
+  noneBtn.style.marginBottom = "4px";
+  noneBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    spriteSplitChoices.delete(spriteIndex);
+    hideSplitMenu();
+    renderSelectedThumbs();
+    onSelectionChanged();
+  });
+  menu.appendChild(noneBtn);
+
+  options.forEach((opt) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn";
+    btn.style.display = "flex";
+    btn.style.alignItems = "center";
+    btn.style.width = "100%";
+    btn.style.marginBottom = "4px";
+
+    btn.appendChild(createSplitIcon(opt.axis, opt.parts));
+    const text = document.createElement("span");
+    text.textContent = `${opt.parts} ${opt.axis === "h" ? "horizontal" : "vertical"}`;
+    btn.appendChild(text);
+
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      spriteSplitChoices.set(spriteIndex, opt);
+      hideSplitMenu();
+      renderSelectedThumbs();
+      onSelectionChanged();
+    });
+
+    menu.appendChild(btn);
+  });
+
+  menu.style.left = `${Math.min(clientX, window.innerWidth - 200)}px`;
+  menu.style.top = `${Math.min(clientY, window.innerHeight - 220)}px`;
+  menu.style.display = "block";
+}
+
 function collectSelectionFrames(): string[] {
   if (!selected.size) return [];
-  const indices = getSortedSelectedIndices();
-  const boxes = indices.map((i) => detected[i]);
+  const boxes = getSelectedBoxesExpanded();
   const bgInput = $("bgColorInput") as HTMLInputElement | null;
   const chosenBg = bgInput?.value ? hexToRgb(bgInput.value) : detectedBg;
   const map = extractSpriteDataURLs(originalCanvas, boxes, {
@@ -338,6 +600,9 @@ function updateSpritePreviewDropdown() {
 */
 
 function onSelectionChanged() {
+  for (const key of [...spriteSplitChoices.keys()]) {
+    if (!selected.has(key)) spriteSplitChoices.delete(key);
+  }
   // Keep preview in sync with selection
   refreshSelectionPreviewFrames(true);
   // The sprite preview dropdown is now populated from the DB, not from the local selection.
@@ -379,6 +644,8 @@ async function loadFromURL(url: string) {
 
   detected = [];
   selected.clear();
+  spriteSplitChoices.clear();
+  hideSplitMenu();
   drawOverlay();
   renderSelectedThumbs();
   onSelectionChanged();
@@ -415,6 +682,8 @@ function runDetect(explicitBg?: RGB | null) {
 
   // Start with no selection; user taps to select/deselect.
   selected = new Set();
+  spriteSplitChoices.clear();
+  hideSplitMenu();
 
   const bgInput = $("bgColorInput") as HTMLInputElement;
   const bgPickBtn = $("bgColorPickBtn") as HTMLButtonElement;
@@ -469,7 +738,7 @@ async function saveSelectedSpritesToFirebase() {
   const nameInput = $("spriteNamePrefix") as HTMLInputElement;
   const baseName = (nameInput?.value || "sprite").trim();
 
-  const boxes = [...selected].map((i) => detected[i]);
+  const boxes = getSelectedBoxesExpanded();
   const map = extractSpriteDataURLs(originalCanvas, boxes, {
     bgColor: detectedBg,
     tolerance: detectedTolerance,
@@ -483,24 +752,126 @@ async function saveSelectedSpritesToFirebase() {
   alert(`Saved ${selected.size} sprites to Firebase (sprites/*).`);
 }
 
+function getBuilderMode(): BuilderMode {
+  const select = $("builderTypeSelect") as HTMLSelectElement | null;
+  const val = (select?.value || "atlas").toLowerCase();
+  return val === "font" ? "font" : "atlas";
+}
+
+function getFontConfigText(name: string, json: any): string {
+  const frame = Object.values(json?.frames || {})[0] as any;
+  const width = frame?.frame?.w || 16;
+  const height = frame?.frame?.h || 16;
+  const imageName = (name || "font_sheet").trim();
+
+  return `{
+  image: "${imageName}",
+  height: ${height},
+  width: ${width},
+
+  chars: Phaser.GameObjects.RetroFont.TEXT_SET3
+}`;
+}
+
+function applyBuilderModeUI(mode: BuilderMode) {
+  const spriteSaveSubtitle = $("spriteSaveSubtitle");
+  const builderSubtitle = $("builderSubtitle");
+  const spritePrefixInput = $("spriteNamePrefix") as HTMLInputElement | null;
+  const atlasNameInput = $("atlasNameInput") as HTMLInputElement | null;
+  const buildBtn = $("buildAtlasBtn") as HTMLButtonElement | null;
+  const saveBtn = $("saveAtlasFirebaseBtn") as HTMLButtonElement | null;
+  const downloadJsonBtn = $("downloadAtlasJsonBtn") as HTMLButtonElement | null;
+
+  if (mode === "font") {
+    if (spriteSaveSubtitle) spriteSaveSubtitle.textContent = "Save Glyphs to Firebase";
+    if (builderSubtitle) builderSubtitle.textContent = "Font Builder";
+    if (spritePrefixInput) spritePrefixInput.placeholder = "Glyph name prefix (e.g., gold_font)";
+    if (atlasNameInput) atlasNameInput.placeholder = "Font sheet name (e.g., gold_font)";
+    if (buildBtn) buildBtn.textContent = "Build Font Sheet";
+    if (saveBtn) saveBtn.textContent = "Save Font Sheet (RTDB)";
+    if (downloadJsonBtn) downloadJsonBtn.textContent = "Download Font Config";
+  } else {
+    if (spriteSaveSubtitle) spriteSaveSubtitle.textContent = "Save Sprites to Firebase";
+    if (builderSubtitle) builderSubtitle.textContent = "Atlas Builder";
+    if (spritePrefixInput) spritePrefixInput.placeholder = "Sprite name prefix (e.g., enemy)";
+    if (atlasNameInput) atlasNameInput.placeholder = "Atlas name (e.g., enemy_atlas)";
+    if (buildBtn) buildBtn.textContent = "Build Atlas";
+    if (saveBtn) saveBtn.textContent = "Save Atlas (RTDB)";
+    if (downloadJsonBtn) downloadJsonBtn.textContent = "Download JSON";
+  }
+}
+
+async function syncAtlasPreviewFromFrameOrder() {
+  if (!atlasFrames.length) return;
+
+
+  const named: Record<string, string> = {};
+  atlasFrames.forEach((frameData, i) => {
+    named[`atlas_s${i}`] = frameData;
+  });
+
+  const mode = getBuilderMode();
+  const { dataURL, json } = await buildAtlas(named);
+  const img = $("atlasPreviewImg") as HTMLImageElement;
+  img.src = dataURL;
+  (img as any)._atlasJson = json;
+  (img as any)._atlasDataURL = dataURL;
+  (img as any)._atlasOutputJson =
+    mode === "font"
+      ? getFontConfigText(
+          ($("atlasNameInput") as HTMLInputElement)?.value || "font_sheet",
+          json
+        )
+      : json;
+
+  const trimBtn = $("trimAtlasBtn") as HTMLButtonElement;
+  if (json?.meta?.size?.w === 2048) {
+    trimBtn.style.display = "inline-block";
+  } else {
+    trimBtn.style.display = "none";
+  }
+}
+
+function scheduleAtlasOrderSync(): Promise<void> {
+  if (atlasSyncPromise) return atlasSyncPromise;
+
+  atlasSyncPromise = (async () => {
+    await syncAtlasPreviewFromFrameOrder();
+    atlasOrderDirty = false;
+  })().finally(() => {
+    atlasSyncPromise = null;
+  });
+
+  return atlasSyncPromise;
+}
+
+
 async function buildAtlasAndPreview() {
   if (!selected.size) {
     alert("No sprites selected.");
     return;
   }
 
-  const boxes = [...selected].map((i) => detected[i]);
+  const boxes = getSelectedBoxesExpanded();
   const map = extractSpriteDataURLs(originalCanvas, boxes, {
     bgColor: detectedBg,
     tolerance: detectedTolerance,
   });
 
   const named: Record<string, string> = {};
-  let idx = 0;
-  for (const k of Object.keys(map)) {
-    named[`atlas_s${idx++}`] = map[k];
+  if (atlasOrderDirty && atlasFrames.length === Object.keys(map).length) {
+    atlasFrames.forEach((frameData, i) => {
+      named[`atlas_s${i}`] = frameData;
+    });
+  } else {
+    let idx = 0;
+    for (const k of Object.keys(map)) {
+      named[`atlas_s${idx++}`] = map[k];
+    }
+    atlasOrderDirty = false;
   }
 
+  const mode = getBuilderMode();
   const { dataURL, json } = await buildAtlas(named);
 
   const img = $("atlasPreviewImg") as HTMLImageElement;
@@ -508,6 +879,9 @@ async function buildAtlasAndPreview() {
 
   (img as any)._atlasJson = json;
   (img as any)._atlasDataURL = dataURL;
+  (img as any)._atlasOutputJson = mode === "font"
+    ? getFontConfigText(($("atlasNameInput") as HTMLInputElement)?.value || "font_sheet", json)
+    : json;
 
   const trimBtn = $("trimAtlasBtn") as HTMLButtonElement;
   if (json?.meta?.size?.w === 2048) {
@@ -528,6 +902,7 @@ async function buildAtlasAndPreview() {
     const atlasImg = new Image();
     atlasImg.onload = async () => {
       atlasFrames = await extractFramesFromAtlas(atlasImg, json);
+      atlasOrderDirty = false;
       renderAtlasFrames();
       resolve();
     };
@@ -537,6 +912,55 @@ async function buildAtlasAndPreview() {
     }
     atlasImg.src = dataURL;
   });
+}
+
+function remapSelectedFrameIndicesAfterMove(
+  selectedIndices: Set<number>,
+  length: number,
+  from: number,
+  to: number
+): Set<number> {
+  if (
+    from < 0 ||
+    to < 0 ||
+    from >= length ||
+    to >= length ||
+    from === to
+  ) {
+    return new Set(selectedIndices);
+  }
+
+  const order = Array.from({ length }, (_, i) => i);
+  const [moved] = order.splice(from, 1);
+  order.splice(to, 0, moved);
+
+  const oldToNew = new Map<number, number>();
+  order.forEach((oldIndex, newIndex) => {
+    oldToNew.set(oldIndex, newIndex);
+  });
+
+  const nextSelected = new Set<number>();
+  selectedIndices.forEach((oldIndex) => {
+    const mapped = oldToNew.get(oldIndex);
+    if (typeof mapped === "number") nextSelected.add(mapped);
+  });
+
+  return nextSelected;
+}
+
+async function toggleAtlasReorder() {
+  atlasReorderEnabled = !atlasReorderEnabled;
+  const btn = $("reorderAtlasFramesBtn") as HTMLButtonElement | null;
+  if (btn) {
+    btn.classList.toggle("active", atlasReorderEnabled);
+    btn.setAttribute("aria-pressed", String(atlasReorderEnabled));
+    btn.textContent = atlasReorderEnabled ? "✓ Reorder" : "↕ Reorder";
+  }
+  renderAtlasFrames();
+
+  if (!atlasReorderEnabled && atlasOrderDirty) {
+    await scheduleAtlasOrderSync();
+  }
 }
 
 function renderAtlasFrames() {
@@ -555,6 +979,8 @@ function renderAtlasFrames() {
     img.style.height = "auto";
     img.style.margin = "4px";
     img.dataset.frameIndex = String(index);
+    img.draggable = atlasReorderEnabled;
+    img.style.cursor = atlasReorderEnabled ? "grab" : "pointer";
 
     if (atlasSelectedFrameIndices.has(index)) {
       img.classList.add("selected");
@@ -571,6 +997,55 @@ function renderAtlasFrames() {
       refreshAtlasPreviewFrames(false); // Update preview but don't start playing
     });
 
+    if (atlasReorderEnabled) {
+      img.addEventListener("dragstart", (ev) => {
+        img.style.opacity = "0.45";
+        if (ev.dataTransfer) {
+          ev.dataTransfer.setData("application/x-atlas-frame-index", String(index));
+          ev.dataTransfer.setData("text/plain", String(index));
+          ev.dataTransfer.effectAllowed = "move";
+        }
+      });
+
+      img.addEventListener("dragend", () => {
+        img.style.opacity = "1";
+      });
+
+      img.addEventListener("dragover", (ev) => {
+        ev.preventDefault();
+        if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+      });
+
+      img.addEventListener("drop", (ev) => {
+        ev.preventDefault();
+        const rawFrom =
+          ev.dataTransfer?.getData("application/x-atlas-frame-index") ||
+          ev.dataTransfer?.getData("text/plain") ||
+          "";
+        if (!/^\d+$/.test(rawFrom)) return;
+
+        const from = Number(rawFrom);
+        const to = index;
+
+        if (!Number.isFinite(from) || from === to) return;
+        if (from < 0 || from >= atlasFrames.length || to < 0 || to >= atlasFrames.length) return;
+
+        const moved = atlasFrames.splice(from, 1)[0];
+        atlasFrames.splice(to, 0, moved);
+        atlasSelectedFrameIndices = remapSelectedFrameIndicesAfterMove(
+          atlasSelectedFrameIndices,
+          atlasFrames.length,
+          from,
+          to
+        );
+        atlasOrderDirty = true;
+
+        renderAtlasFrames();
+        refreshAtlasPreviewFrames(false);
+        void scheduleAtlasOrderSync();
+      });
+    }
+
     cont.appendChild(img);
   });
 }
@@ -579,8 +1054,16 @@ async function saveAtlasToFirebase() {
   const nameInput = $("atlasNameInput") as HTMLInputElement;
   const atlasName = (nameInput?.value || "untitled_atlas").trim();
 
+  if (atlasSyncPromise) {
+    await atlasSyncPromise;
+  }
+  if (atlasOrderDirty) {
+    await scheduleAtlasOrderSync();
+  }
+
   const img = $("atlasPreviewImg") as HTMLImageElement;
   const json = (img as any)._atlasJson;
+  const outputJson = (img as any)._atlasOutputJson ?? json;
   const dataURL = (img as any)._atlasDataURL;
 
   if (!json || !dataURL) {
@@ -588,7 +1071,7 @@ async function saveAtlasToFirebase() {
     return;
   }
 
-  await saveAtlas(atlasName, { json, png: dataURL });
+  await saveAtlas(atlasName, { json: outputJson, png: dataURL });
   alert(`Atlas "${atlasName}" saved to RTDB (atlases/${atlasName}).`);
   await populateAtlasSelect(); // Refresh atlas list
 }
@@ -865,6 +1348,7 @@ async function loadAtlasAndPreview() {
 
     (img as any)._atlasJson = json;
     (img as any)._atlasDataURL = dataURL;
+    (img as any)._atlasOutputJson = json;
 
     const trimBtn = $("trimAtlasBtn") as HTMLButtonElement;
     if (json?.meta?.size?.w === 2048) {
@@ -885,6 +1369,7 @@ async function loadAtlasAndPreview() {
         const atlasImg = new Image();
         atlasImg.onload = async () => {
             atlasFrames = await extractFramesFromAtlas(atlasImg, json);
+            atlasOrderDirty = false;
             // Select all frames by default
             atlasSelectedFrameIndices = new Set(atlasFrames.map((_, i) => i));
             renderAtlasFrames();
@@ -1096,7 +1581,11 @@ function downloadAtlasJson() {
   const select = $("atlasSelect") as HTMLSelectElement;
   const atlasName = (nameInput?.value.trim()) || (select?.value) || "atlas";
   const filename = `${atlasName}.json`;
-  const content = JSON.stringify(json, null, 2);
+  const outputJson = (img as any)._atlasOutputJson ?? json;
+  const content =
+    typeof outputJson === "string"
+      ? outputJson
+      : JSON.stringify(outputJson, null, 2);
 
   downloadFile(filename, content, "application/json");
 }
@@ -1208,6 +1697,14 @@ function wireUI() {
     saveSelectedSpritesToFirebase
   );
 
+  const builderSelect = $("builderTypeSelect") as HTMLSelectElement | null;
+  if (builderSelect) {
+    builderSelect.addEventListener("change", () => {
+      applyBuilderModeUI(getBuilderMode());
+    });
+    applyBuilderModeUI(getBuilderMode());
+  }
+
   ($("buildAtlasBtn") as HTMLButtonElement).addEventListener(
     "click",
     buildAtlasAndPreview
@@ -1252,6 +1749,11 @@ function wireUI() {
     "change",
     loadAtlasAndPreview
   );
+
+  const reorderBtn = $("reorderAtlasFramesBtn") as HTMLButtonElement | null;
+  if (reorderBtn) {
+    reorderBtn.addEventListener("click", toggleAtlasReorder);
+  }
 
   // Selection preview controls
   const selBtn = $("selectionPreviewBtn") as HTMLButtonElement | null;
