@@ -48,6 +48,8 @@ let atlasSelectedFrameIndices = new Set<number>();
 let atlasAnimFrameIndex = 0;
 let atlasAnimPlaying = false;
 let atlasReorderEnabled = false;
+let atlasOrderDirty = false;
+let atlasSyncPromise: Promise<void> | null = null;
 
 // BG color eyedropper state
 let bgPickActive = false;
@@ -912,6 +914,39 @@ function toggleAtlasReorder() {
   renderAtlasFrames();
 }
 
+function scheduleAtlasOrderSync() {
+  if (atlasSyncPromise) return atlasSyncPromise;
+
+  atlasSyncPromise = (async () => {
+    if (!atlasOrderDirty || !atlasFrames.length) {
+      atlasOrderDirty = false;
+      return;
+    }
+
+    const named: Record<string, string> = {};
+    atlasFrames.forEach((frameData, i) => {
+      named[`atlas_s${i}`] = frameData;
+    });
+
+    const { dataURL, json } = await buildAtlas(named);
+    const img = $("atlasPreviewImg") as HTMLImageElement;
+    const mode = getBuilderMode();
+
+    img.src = dataURL;
+    (img as any)._atlasJson = json;
+    (img as any)._atlasDataURL = dataURL;
+    (img as any)._atlasOutputJson = mode === "font"
+      ? getFontConfigText(($("atlasNameInput") as HTMLInputElement)?.value || "font_sheet", json)
+      : json;
+
+    atlasOrderDirty = false;
+  })().finally(() => {
+    atlasSyncPromise = null;
+  });
+
+  return atlasSyncPromise;
+}
+
 function renderAtlasFrames() {
   const cont = $("atlasFramesContainer") as HTMLDivElement;
   cont.innerHTML = "";
@@ -978,6 +1013,7 @@ function renderAtlasFrames() {
           from,
           to
         );
+        atlasOrderDirty = true;
 
         renderAtlasFrames();
         refreshAtlasPreviewFrames(false);
@@ -1506,7 +1542,14 @@ async function downloadCharacterPng() {
   triggerDownload(dataURL, filename, "image/png");
 }
 
-function downloadAtlasJson() {
+async function downloadAtlasJson() {
+  if (atlasSyncPromise) {
+    await atlasSyncPromise;
+  }
+  if (atlasOrderDirty) {
+    await scheduleAtlasOrderSync();
+  }
+
   const img = $("atlasPreviewImg") as HTMLImageElement;
   const json = (img as any)._atlasJson;
 
@@ -1528,7 +1571,14 @@ function downloadAtlasJson() {
   downloadFile(filename, content, "application/json");
 }
 
-function downloadAtlasPng() {
+async function downloadAtlasPng() {
+  if (atlasSyncPromise) {
+    await atlasSyncPromise;
+  }
+  if (atlasOrderDirty) {
+    await scheduleAtlasOrderSync();
+  }
+
   const img = $("atlasPreviewImg") as HTMLImageElement;
   const dataURL = (img as any)._atlasDataURL;
 
