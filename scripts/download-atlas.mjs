@@ -41,16 +41,18 @@ async function main() {
   const atlasName = args.atlasName;
   const outDir = args.outDir || "downloads";
 
-  if (!gameName || !atlasName) {
+  if (!atlasName) {
     console.error(
-      "Usage: node scripts/download-atlas.mjs --gameName <name> --atlasName <name> [--outDir <dir>]"
+      "Usage: node scripts/download-atlas.mjs --atlasName <name> [--gameName <name>] [--outDir <dir>]"
     );
     process.exit(1);
   }
 
-  const normalizedGameName = normalizeGameName(gameName);
+  const normalizedGameName = gameName ? normalizeGameName(gameName) : null;
   const normalizedAtlasName = normalizeAtlasName(atlasName);
-  const rtdbPath = `games/${normalizedGameName}/atlases/${normalizedAtlasName}`;
+  const rtdbPath = normalizedGameName
+    ? `games/${normalizedGameName}/atlases/${normalizedAtlasName}`
+    : `atlases/${normalizedAtlasName}`;
   const url = `${DATABASE_URL}/${rtdbPath}.json`;
 
   const response = await fetch(url);
