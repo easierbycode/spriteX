@@ -287,6 +287,38 @@
         font-weight: 600;
         margin-bottom: 6px;
       }
+      .modal {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 1000;
+      }
+      .modal.open {
+        display: flex;
+      }
+      .modal-content {
+        width: min(560px, 92vw);
+        background: var(--panel-bg);
+        border: 1px solid var(--panel-border);
+        border-radius: 8px;
+        padding: 14px;
+      }
+      .dropzone {
+        margin-top: 8px;
+        border: 2px dashed var(--panel-border);
+        border-radius: 8px;
+        padding: 20px;
+        text-align: center;
+        color: var(--tip-text);
+      }
+      .dropzone.active {
+        border-color: var(--accent);
+        color: var(--text-color);
+        background: color-mix(in srgb, var(--accent) 12%, transparent);
+      }
     </style>
   </head>
   <body>
@@ -426,6 +458,7 @@
             placeholder="Atlas name (e.g., enemy_atlas)"
           />
           <button id="buildAtlasBtn" class="btn">Build Atlas</button>
+          <button id="openImportAtlasModalBtn" class="btn">Import Atlas</button>
           <button id="trimAtlasBtn" class="btn" style="display: none;">Trim Atlas</button>
           <button id="saveAtlasFirebaseBtn" class="btn" disabled>
             Save Atlas (RTDB)
@@ -507,6 +540,28 @@
               alt="Character Preview"
             />
           </div>
+      </div>
+    </div>
+
+    <div id="importAtlasModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="importAtlasTitle">
+      <div class="modal-content">
+        <div class="row" style="justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <strong id="importAtlasTitle">Import Atlas</strong>
+          <button id="closeImportAtlasModalBtn" class="btn" type="button">Close</button>
+        </div>
+        <div class="row">
+          <input id="importAtlasJsonInput" type="file" accept=".json,application/json" />
+          <input id="importAtlasPngInput" type="file" accept=".png,image/png" />
+        </div>
+        <div id="atlasImportDropzone" class="dropzone">
+          Drag & drop atlas JSON + PNG files here
+        </div>
+        <div id="atlasImportStatus" style="margin-top: 8px; color: var(--tip-text); font-size: 0.95em;">
+          Select both files to import.
+        </div>
+        <div class="row" style="margin-top: 10px; justify-content: flex-end;">
+          <button id="confirmImportAtlasBtn" class="btn" type="button">Import</button>
+        </div>
       </div>
     </div>
 
