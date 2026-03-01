@@ -272,6 +272,18 @@ function ensureDataURL(s: string): string {
   return s.startsWith("data:") ? s : `data:image/png;base64,${s}`;
 }
 
+/** Firebase RTDB keys cannot contain . # $ / [ ] */
+function encodeAtlasFrameKey(name: string): string {
+  return `k_${Array.from(name)
+    .map((ch) => ch.codePointAt(0)!.toString(16).padStart(4, "0"))
+    .join("")}`;
+}
+
+function getAtlasFrameEntry(framesMap: any, frameName: string): any | null {
+  if (!framesMap || typeof framesMap !== "object") return null;
+  return framesMap[frameName] ?? framesMap[encodeAtlasFrameKey(frameName)] ?? null;
+}
+
 /** Some atlases store json as string. Handle object or (single/double) string. */
 function normalizeAtlasJson(jsonVal: any): any | null {
   if (jsonVal == null) return null;
@@ -554,7 +566,8 @@ export function createAtlasJson(
     const offsetX = Math.floor((frameWidth - dimensions.width) / 2);
     const offsetY = Math.floor((frameHeight - dimensions.height) / 2);
 
-    frames[name] = {
+    const key = encodeAtlasFrameKey(name);
+    frames[key] = {
       frame: {
         x: currentX,
         y: currentY,
@@ -608,7 +621,7 @@ export async function createAtlasPng(
     return new Promise<void>((resolve) => {
       const img = new Image();
       img.onload = () => {
-        const frame = atlasJson.frames[name];
+        const frame = getAtlasFrameEntry(atlasJson.frames, name);
         if (frame) {
           const drawX = frame.frame.x + (frame.spriteSourceSize?.x ?? 0);
           const drawY = frame.frame.y + (frame.spriteSourceSize?.y ?? 0);
@@ -774,7 +787,7 @@ export async function loadCharacterPreviewFromAtlas(
   // Slice frames
   const frames: string[] = [];
   for (const key of textures) {
-    const f = framesMap[key];
+    const f = getAtlasFrameEntry(framesMap, key);
     if (!f || !f.frame) continue;
     const { x, y, w, h } = f.frame;
     const c = document.createElement("canvas");
@@ -798,7 +811,7 @@ export function validateCharacterFrames(
   const atlasFrames =
     atlasJson.frames || atlasJson.textures?.[0]?.frames || {};
   character.texture.forEach((name) => {
-    if (!atlasFrames[name]) missing.push(name);
+    if (!getAtlasFrameEntry(atlasFrames, name)) missing.push(name);
   });
   return missing;
 }

@@ -718,7 +718,10 @@ async function extractFramesFromAtlas(
   const frameData = atlasJson.frames || {};
 
   for (const key in frameData) {
-    const frame = frameData[key].frame;
+    const frame = frameData[key]?.frame;
+    if (!frame || typeof frame.w !== "number" || typeof frame.h !== "number") {
+      continue;
+    }
     const c = document.createElement("canvas");
     c.width = frame.w;
     c.height = frame.h;
