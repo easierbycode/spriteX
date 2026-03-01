@@ -50,6 +50,8 @@ let atlasAnimPlaying = false;
 let atlasReorderEnabled = false;
 let atlasOrderDirty = false;
 let atlasSyncPromise: Promise<void> | null = null;
+let importAtlasJsonFile: File | null = null;
+let importAtlasPngFile: File | null = null;
 
 // BG color eyedropper state
 let bgPickActive = false;
@@ -1316,46 +1318,145 @@ async function loadAtlasAndPreview() {
     }
 
     const { png: dataURL, json } = atlasData;
+    await applyAtlasPreview(dataURL, json, { selectAllFrames: true, startPreviewNow: true });
+}
 
-    const img = $("atlasPreviewImg") as HTMLImageElement;
-    img.src = dataURL;
+async function applyAtlasPreview(
+  dataURL: string,
+  json: any,
+  options?: { selectAllFrames?: boolean; startPreviewNow?: boolean; outputJson?: any }
+) {
+  const img = $("atlasPreviewImg") as HTMLImageElement;
+  img.src = dataURL;
 
-    (img as any)._atlasJson = json;
-    (img as any)._atlasDataURL = dataURL;
-    (img as any)._atlasOutputJson = json;
+  (img as any)._atlasJson = json;
+  (img as any)._atlasDataURL = dataURL;
+  (img as any)._atlasOutputJson = options?.outputJson ?? json;
 
-    const trimBtn = $("trimAtlasBtn") as HTMLButtonElement;
-    if (json?.meta?.size?.w === 2048) {
-        trimBtn.style.display = 'inline-block';
-    } else {
-        trimBtn.style.display = 'none';
+  const trimBtn = $("trimAtlasBtn") as HTMLButtonElement;
+  trimBtn.style.display = json?.meta?.size?.w === 2048 ? "inline-block" : "none";
+
+  $("saveAtlasFirebaseBtn")!.removeAttribute("disabled");
+  $("downloadAtlasJsonBtn")!.removeAttribute("disabled");
+  $("downloadAtlasPngBtn")!.removeAttribute("disabled");
+
+  stopAtlasPreview();
+  atlasSelectedFrameIndices.clear();
+
+  await new Promise<void>((resolve) => {
+    const atlasImg = new Image();
+    atlasImg.onload = async () => {
+      atlasFrames = await extractFramesFromAtlas(atlasImg, json);
+      atlasOrderDirty = false;
+      if (options?.selectAllFrames) {
+        atlasSelectedFrameIndices = new Set(atlasFrames.map((_, i) => i));
+      }
+      renderAtlasFrames();
+      if (options?.startPreviewNow) {
+        startAtlasPreview();
+      }
+      resolve();
+    };
+    atlasImg.onerror = () => {
+      console.error("Failed to load atlas image for preview");
+      resolve();
+    };
+    atlasImg.src = dataURL;
+  });
+}
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+    reader.readAsText(file);
+  });
+}
+
+function readFileAsDataURL(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+    reader.readAsDataURL(file);
+  });
+}
+
+function setAtlasImportStatus(message: string) {
+  const status = $("atlasImportStatus") as HTMLDivElement | null;
+  if (status) status.textContent = message;
+}
+
+function refreshImportAtlasStatus() {
+  const jsonLabel = importAtlasJsonFile ? `JSON: ${importAtlasJsonFile.name}` : "JSON: missing";
+  const pngLabel = importAtlasPngFile ? `PNG: ${importAtlasPngFile.name}` : "PNG: missing";
+  setAtlasImportStatus(`${jsonLabel} | ${pngLabel}`);
+}
+
+function clearImportAtlasState() {
+  importAtlasJsonFile = null;
+  importAtlasPngFile = null;
+  const jsonInput = $("importAtlasJsonInput") as HTMLInputElement | null;
+  const pngInput = $("importAtlasPngInput") as HTMLInputElement | null;
+  if (jsonInput) jsonInput.value = "";
+  if (pngInput) pngInput.value = "";
+  setAtlasImportStatus("Select both files to import.");
+}
+
+function setImportAtlasFile(file: File) {
+  const fileName = file.name.toLowerCase();
+  const isJson = file.type === "application/json" || fileName.endsWith(".json");
+  const isPng = file.type === "image/png" || fileName.endsWith(".png");
+
+  if (isJson) {
+    importAtlasJsonFile = file;
+  } else if (isPng) {
+    importAtlasPngFile = file;
+  }
+}
+
+function openImportAtlasModal() {
+  const modal = $("importAtlasModal") as HTMLDivElement | null;
+  modal?.classList.add("open");
+  refreshImportAtlasStatus();
+}
+
+function closeImportAtlasModal(reset = false) {
+  const modal = $("importAtlasModal") as HTMLDivElement | null;
+  modal?.classList.remove("open");
+  if (reset) clearImportAtlasState();
+}
+
+async function importAtlasFromSelectedFiles() {
+  if (!importAtlasJsonFile || !importAtlasPngFile) {
+    alert("Select both atlas JSON and PNG files.");
+    return;
+  }
+
+  try {
+    const [jsonText, dataURL] = await Promise.all([
+      readFileAsText(importAtlasJsonFile),
+      readFileAsDataURL(importAtlasPngFile),
+    ]);
+    const json = JSON.parse(jsonText);
+
+    if (!json?.frames || typeof json.frames !== "object") {
+      alert("Invalid atlas JSON. Missing frames object.");
+      return;
     }
 
-    $("saveAtlasFirebaseBtn")!.removeAttribute("disabled");
-    $("downloadAtlasJsonBtn")!.removeAttribute("disabled");
-    $("downloadAtlasPngBtn")!.removeAttribute("disabled");
+    const atlasNameInput = $("atlasNameInput") as HTMLInputElement | null;
+    if (atlasNameInput && !atlasNameInput.value.trim()) {
+      atlasNameInput.value = importAtlasJsonFile.name.replace(/\.json$/i, "");
+    }
 
-    // This part is the same as in buildAtlasAndPreview
-    stopAtlasPreview();
-    atlasSelectedFrameIndices.clear();
-
-    await new Promise<void>(resolve => {
-        const atlasImg = new Image();
-        atlasImg.onload = async () => {
-            atlasFrames = await extractFramesFromAtlas(atlasImg, json);
-            atlasOrderDirty = false;
-            // Select all frames by default
-            atlasSelectedFrameIndices = new Set(atlasFrames.map((_, i) => i));
-            renderAtlasFrames();
-            startAtlasPreview();
-            resolve();
-        };
-        atlasImg.onerror = () => {
-            console.error("Failed to load atlas image for preview");
-            resolve();
-        }
-        atlasImg.src = dataURL;
-    });
+    await applyAtlasPreview(dataURL, json, { selectAllFrames: true, startPreviewNow: true });
+    closeImportAtlasModal(true);
+  } catch (err: any) {
+    console.error(err);
+    alert(`Failed to import atlas: ${err?.message || "Unknown error"}`);
+  }
 }
 
 async function loadCharacterAndPreview() {
@@ -1697,6 +1798,68 @@ function wireUI() {
     "click",
     buildAtlasAndPreview
   );
+
+  ($("openImportAtlasModalBtn") as HTMLButtonElement)?.addEventListener(
+    "click",
+    () => openImportAtlasModal()
+  );
+
+  ($("closeImportAtlasModalBtn") as HTMLButtonElement)?.addEventListener(
+    "click",
+    () => closeImportAtlasModal(false)
+  );
+
+  ($("confirmImportAtlasBtn") as HTMLButtonElement)?.addEventListener(
+    "click",
+    importAtlasFromSelectedFiles
+  );
+
+  ($("importAtlasJsonInput") as HTMLInputElement)?.addEventListener("change", (ev) => {
+    const input = ev.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    importAtlasJsonFile = file;
+    refreshImportAtlasStatus();
+  });
+
+  ($("importAtlasPngInput") as HTMLInputElement)?.addEventListener("change", (ev) => {
+    const input = ev.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    importAtlasPngFile = file;
+    refreshImportAtlasStatus();
+  });
+
+  const dropzone = $("atlasImportDropzone") as HTMLDivElement | null;
+  if (dropzone) {
+    const setDropActive = (active: boolean) => dropzone.classList.toggle("active", active);
+
+    ["dragenter", "dragover"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, (ev) => {
+        ev.preventDefault();
+        setDropActive(true);
+      });
+    });
+
+    ["dragleave", "dragend", "drop"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, (ev) => {
+        ev.preventDefault();
+        setDropActive(false);
+      });
+    });
+
+    dropzone.addEventListener("drop", (ev) => {
+      const files = Array.from(ev.dataTransfer?.files || []);
+      files.forEach((file) => setImportAtlasFile(file));
+      refreshImportAtlasStatus();
+    });
+  }
+
+  ($("importAtlasModal") as HTMLDivElement | null)?.addEventListener("click", (ev) => {
+    if (ev.target === ev.currentTarget) {
+      closeImportAtlasModal(false);
+    }
+  });
 
   ($("trimAtlasBtn") as HTMLButtonElement).addEventListener(
     "click",
