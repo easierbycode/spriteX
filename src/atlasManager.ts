@@ -162,7 +162,11 @@ export async function saveAtlas(
 ): Promise<void> {
   const db = getDB();
   try {
-    await set(ref(db, `atlases/${atlasKey}`), data);
+    const safeJson = sanitizeAtlasJsonForRTDB(data?.json);
+    await set(ref(db, `atlases/${atlasKey}`), {
+      ...data,
+      json: safeJson,
+    });
   } catch (error) {
     console.error(`Error saving atlas ${atlasKey}:`, error);
     throw error;
@@ -277,6 +281,48 @@ function encodeAtlasFrameKey(name: string): string {
   return `k_${Array.from(name)
     .map((ch) => ch.codePointAt(0)!.toString(16).padStart(4, "0"))
     .join("")}`;
+}
+
+const RTDB_INVALID_KEY_CHARS = /[.#$\/\[\]]/;
+
+function makeRTDBSafeKey(key: string): string {
+  if (key && !RTDB_INVALID_KEY_CHARS.test(key)) return key;
+  return encodeAtlasFrameKey(key);
+}
+
+function sanitizeAtlasFramesForRTDB(framesMap: any): any {
+  if (!framesMap || typeof framesMap !== "object" || Array.isArray(framesMap)) {
+    return framesMap;
+  }
+
+  const safeFrames: Record<string, any> = {};
+  Object.entries(framesMap).forEach(([key, value]) => {
+    safeFrames[makeRTDBSafeKey(key)] = value;
+  });
+  return safeFrames;
+}
+
+function sanitizeAtlasJsonForRTDB(jsonVal: any): any {
+  const parsed = normalizeAtlasJson(jsonVal);
+  if (!parsed || typeof parsed !== "object") return jsonVal;
+
+  const safeJson = JSON.parse(JSON.stringify(parsed));
+  if (safeJson.frames) {
+    safeJson.frames = sanitizeAtlasFramesForRTDB(safeJson.frames);
+  }
+
+  if (Array.isArray(safeJson.textures)) {
+    safeJson.textures = safeJson.textures.map((texture: any) => {
+      if (!texture || typeof texture !== "object") return texture;
+      if (!texture.frames) return texture;
+      return {
+        ...texture,
+        frames: sanitizeAtlasFramesForRTDB(texture.frames),
+      };
+    });
+  }
+
+  return safeJson;
 }
 
 function getAtlasFrameEntry(framesMap: any, frameName: string): any | null {
