@@ -21,15 +21,6 @@ function parseArgs(argv) {
   return args;
 }
 
-function normalizeGameName(gameName) {
-  return gameName.replace(/-phaser\d+$/i, "");
-}
-
-function normalizeAtlasName(atlasName) {
-  if (atlasName === "game_asset") return "game_ui";
-  return atlasName;
-}
-
 function decodeBase64Png(raw) {
   const cleaned = raw.replace(/^data:image\/png;base64,/, "");
   return Buffer.from(cleaned, "base64");
@@ -48,11 +39,9 @@ async function main() {
     process.exit(1);
   }
 
-  const normalizedGameName = gameName ? normalizeGameName(gameName) : null;
-  const normalizedAtlasName = normalizeAtlasName(atlasName);
-  const rtdbPath = normalizedGameName
-    ? `games/${normalizedGameName}/atlases/${normalizedAtlasName}`
-    : `atlases/${normalizedAtlasName}`;
+  const rtdbPath = gameName
+    ? `games/${gameName}/atlases/${atlasName}`
+    : `atlases/${atlasName}`;
   const url = `${DATABASE_URL}/${rtdbPath}.json`;
 
   const response = await fetch(url);
@@ -92,8 +81,8 @@ async function main() {
   const outputDirectory = path.resolve(outDir);
   await mkdir(outputDirectory, { recursive: true });
 
-  const pngFilePath = path.join(outputDirectory, `${normalizedAtlasName}.png`);
-  const jsonFilePath = path.join(outputDirectory, `${normalizedAtlasName}.json`);
+  const pngFilePath = path.join(outputDirectory, `${atlasName}.png`);
+  const jsonFilePath = path.join(outputDirectory, `${atlasName}.json`);
 
   await writeFile(pngFilePath, pngBuffer);
   await writeFile(jsonFilePath, jsonText, "utf8");
@@ -103,8 +92,8 @@ async function main() {
       {
         gameName,
         atlasName,
-        normalizedGameName,
-        normalizedAtlasName,
+        gameName,
+        atlasName,
         rtdbPath,
         files: {
           png: pngFilePath,
