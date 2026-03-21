@@ -162,7 +162,11 @@ export async function saveAtlas(
 ): Promise<void> {
   const db = getDB();
   try {
-    await set(ref(db, `atlases/${atlasKey}`), data);
+    const safeJson = sanitizeAtlasJsonForRTDB(data?.json);
+    await set(ref(db, `atlases/${atlasKey}`), {
+      ...data,
+      json: safeJson,
+    });
   } catch (error) {
     console.error(`Error saving atlas ${atlasKey}:`, error);
     throw error;
@@ -270,6 +274,60 @@ function keyOutBackground(imageData: ImageData, bg: RGB, tolerance: number) {
 
 function ensureDataURL(s: string): string {
   return s.startsWith("data:") ? s : `data:image/png;base64,${s}`;
+}
+
+/** Firebase RTDB keys cannot contain . # $ / [ ] */
+function encodeAtlasFrameKey(name: string): string {
+  return `k_${Array.from(name)
+    .map((ch) => ch.codePointAt(0)!.toString(16).padStart(4, "0"))
+    .join("")}`;
+}
+
+const RTDB_INVALID_KEY_CHARS = /[.#$\/\[\]]/;
+
+function makeRTDBSafeKey(key: string): string {
+  if (key && !RTDB_INVALID_KEY_CHARS.test(key)) return key;
+  return encodeAtlasFrameKey(key);
+}
+
+function sanitizeAtlasFramesForRTDB(framesMap: any): any {
+  if (!framesMap || typeof framesMap !== "object" || Array.isArray(framesMap)) {
+    return framesMap;
+  }
+
+  const safeFrames: Record<string, any> = {};
+  Object.entries(framesMap).forEach(([key, value]) => {
+    safeFrames[makeRTDBSafeKey(key)] = value;
+  });
+  return safeFrames;
+}
+
+function sanitizeAtlasJsonForRTDB(jsonVal: any): any {
+  const parsed = normalizeAtlasJson(jsonVal);
+  if (!parsed || typeof parsed !== "object") return jsonVal;
+
+  const safeJson = JSON.parse(JSON.stringify(parsed));
+  if (safeJson.frames) {
+    safeJson.frames = sanitizeAtlasFramesForRTDB(safeJson.frames);
+  }
+
+  if (Array.isArray(safeJson.textures)) {
+    safeJson.textures = safeJson.textures.map((texture: any) => {
+      if (!texture || typeof texture !== "object") return texture;
+      if (!texture.frames) return texture;
+      return {
+        ...texture,
+        frames: sanitizeAtlasFramesForRTDB(texture.frames),
+      };
+    });
+  }
+
+  return safeJson;
+}
+
+function getAtlasFrameEntry(framesMap: any, frameName: string): any | null {
+  if (!framesMap || typeof framesMap !== "object") return null;
+  return framesMap[frameName] ?? framesMap[encodeAtlasFrameKey(frameName)] ?? null;
 }
 
 /** Some atlases store json as string. Handle object or (single/double) string. */
@@ -554,7 +612,8 @@ export function createAtlasJson(
     const offsetX = Math.floor((frameWidth - dimensions.width) / 2);
     const offsetY = Math.floor((frameHeight - dimensions.height) / 2);
 
-    frames[name] = {
+    const key = encodeAtlasFrameKey(name);
+    frames[key] = {
       frame: {
         x: currentX,
         y: currentY,
@@ -608,7 +667,7 @@ export async function createAtlasPng(
     return new Promise<void>((resolve) => {
       const img = new Image();
       img.onload = () => {
-        const frame = atlasJson.frames[name];
+        const frame = getAtlasFrameEntry(atlasJson.frames, name);
         if (frame) {
           const drawX = frame.frame.x + (frame.spriteSourceSize?.x ?? 0);
           const drawY = frame.frame.y + (frame.spriteSourceSize?.y ?? 0);
@@ -774,7 +833,7 @@ export async function loadCharacterPreviewFromAtlas(
   // Slice frames
   const frames: string[] = [];
   for (const key of textures) {
-    const f = framesMap[key];
+    const f = getAtlasFrameEntry(framesMap, key);
     if (!f || !f.frame) continue;
     const { x, y, w, h } = f.frame;
     const c = document.createElement("canvas");
@@ -798,7 +857,7 @@ export function validateCharacterFrames(
   const atlasFrames =
     atlasJson.frames || atlasJson.textures?.[0]?.frames || {};
   character.texture.forEach((name) => {
-    if (!atlasFrames[name]) missing.push(name);
+    if (!getAtlasFrameEntry(atlasFrames, name)) missing.push(name);
   });
   return missing;
 }

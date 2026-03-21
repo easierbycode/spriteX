@@ -7,7 +7,8 @@
     "build:web": "esbuild src/main.ts --bundle --sourcemap --minify --format=esm --platform=browser --outdir=dist/assets --external:https://www.gstatic.com/*",
     "copy": "node scripts/copy-static.mjs",
     "build": "npm run build:web && npm run copy",
-    "download-atlas": "node scripts/download-atlas.mjs"
+    "download:atlas": "node scripts/download-atlas.mjs",
+    "extract:frames": "node scripts/extract-frames.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.21.5",
