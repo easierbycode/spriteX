@@ -957,6 +957,16 @@ function scheduleAtlasOrderSync() {
   return atlasSyncPromise;
 }
 
+function decodeAtlasFrameKey(key: string): string {
+  if (!key.startsWith("k_")) return key;
+  const hex = key.slice(2);
+  let result = "";
+  for (let i = 0; i < hex.length; i += 4) {
+    result += String.fromCodePoint(parseInt(hex.slice(i, i + 4), 16));
+  }
+  return result;
+}
+
 function renderAtlasFrames() {
   const cont = $("atlasFramesContainer") as HTMLDivElement;
   cont.innerHTML = "";
@@ -967,7 +977,8 @@ function renderAtlasFrames() {
   }
 
   atlasFrames.forEach((frameDataURL, index) => {
-    const frameName = atlasFrameNames[index] || `frame_${index}`;
+    const rawName = atlasFrameNames[index] || `frame_${index}`;
+    const frameName = decodeAtlasFrameKey(rawName);
 
     const wrapper = document.createElement("div");
     wrapper.className = "atlas-frame-wrapper";
