@@ -44,6 +44,7 @@ let selectionPlaying = false;
 // Atlas animation preview state
 let atlasAnimTimer: number | null = null;
 let atlasFrames: string[] = []; // All frames extracted from atlas
+let atlasFrameNames: string[] = []; // Frame keys from atlas JSON
 let atlasSelectedFrameIndices = new Set<number>();
 let atlasAnimFrameIndex = 0;
 let atlasAnimPlaying = false;
@@ -713,8 +714,9 @@ function runDetect(explicitBg?: RGB | null) {
 async function extractFramesFromAtlas(
   atlasImg: HTMLImageElement,
   atlasJson: any
-): Promise<string[]> {
+): Promise<{ frames: string[]; names: string[] }> {
   const frames: string[] = [];
+  const names: string[] = [];
   const frameData = atlasJson.frames || {};
 
   for (const key in frameData) {
@@ -729,9 +731,10 @@ async function extractFramesFromAtlas(
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(atlasImg, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
     frames.push(c.toDataURL("image/png"));
+    names.push(key);
   }
 
-  return frames;
+  return { frames, names };
 }
 
 async function saveSelectedSpritesToFirebase() {
@@ -861,7 +864,9 @@ async function buildAtlasAndPreview() {
   await new Promise<void>(resolve => {
     const atlasImg = new Image();
     atlasImg.onload = async () => {
-      atlasFrames = await extractFramesFromAtlas(atlasImg, json);
+      const result = await extractFramesFromAtlas(atlasImg, json);
+      atlasFrames = result.frames;
+      atlasFrameNames = result.names;
       atlasOrderDirty = false;
       renderAtlasFrames();
       resolve();
@@ -930,7 +935,7 @@ function scheduleAtlasOrderSync() {
 
     const named: Record<string, string> = {};
     atlasFrames.forEach((frameData, i) => {
-      named[`atlas_s${i}`] = frameData;
+      named[atlasFrameNames[i] || `atlas_s${i}`] = frameData;
     });
 
     const { dataURL, json } = await buildAtlas(named);
@@ -962,47 +967,59 @@ function renderAtlasFrames() {
   }
 
   atlasFrames.forEach((frameDataURL, index) => {
+    const frameName = atlasFrameNames[index] || `frame_${index}`;
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "atlas-frame-wrapper";
+    wrapper.title = frameName;
+    wrapper.dataset.frameIndex = String(index);
+    wrapper.draggable = atlasReorderEnabled;
+    wrapper.style.cursor = atlasReorderEnabled ? "grab" : "pointer";
+
     const img = document.createElement("img");
     img.src = frameDataURL;
     img.style.width = "64px";
     img.style.height = "auto";
-    img.style.margin = "4px";
-    img.dataset.frameIndex = String(index);
-    img.draggable = atlasReorderEnabled;
-    img.style.cursor = atlasReorderEnabled ? "grab" : "pointer";
 
     if (atlasSelectedFrameIndices.has(index)) {
-      img.classList.add("selected");
+      wrapper.classList.add("selected");
     }
 
-    img.addEventListener("click", () => {
+    const label = document.createElement("span");
+    label.className = "atlas-frame-label";
+    label.textContent = frameName;
+
+    wrapper.appendChild(img);
+    wrapper.appendChild(label);
+
+    wrapper.addEventListener("click", () => {
       if (atlasSelectedFrameIndices.has(index)) {
         atlasSelectedFrameIndices.delete(index);
-        img.classList.remove("selected");
+        wrapper.classList.remove("selected");
       } else {
         atlasSelectedFrameIndices.add(index);
-        img.classList.add("selected");
+        wrapper.classList.add("selected");
       }
-      refreshAtlasPreviewFrames(false); // Update preview but don't start playing
+      refreshAtlasPreviewFrames(false);
     });
 
     if (atlasReorderEnabled) {
-      img.addEventListener("dragstart", (ev) => {
-        img.style.opacity = "0.45";
+      wrapper.addEventListener("dragstart", (ev) => {
+        wrapper.style.opacity = "0.45";
         ev.dataTransfer?.setData("text/plain", String(index));
         if (ev.dataTransfer) ev.dataTransfer.effectAllowed = "move";
       });
 
-      img.addEventListener("dragend", () => {
-        img.style.opacity = "1";
+      wrapper.addEventListener("dragend", () => {
+        wrapper.style.opacity = "1";
       });
 
-      img.addEventListener("dragover", (ev) => {
+      wrapper.addEventListener("dragover", (ev) => {
         ev.preventDefault();
         if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
       });
 
-      img.addEventListener("drop", (ev) => {
+      wrapper.addEventListener("drop", (ev) => {
         ev.preventDefault();
         const from = Number(ev.dataTransfer?.getData("text/plain"));
         const to = index;
@@ -1012,6 +1029,8 @@ function renderAtlasFrames() {
 
         const moved = atlasFrames.splice(from, 1)[0];
         atlasFrames.splice(to, 0, moved);
+        const movedName = atlasFrameNames.splice(from, 1)[0];
+        atlasFrameNames.splice(to, 0, movedName);
         atlasSelectedFrameIndices = remapSelectedFrameIndicesAfterMove(
           atlasSelectedFrameIndices,
           atlasFrames.length,
@@ -1025,7 +1044,7 @@ function renderAtlasFrames() {
       });
     }
 
-    cont.appendChild(img);
+    cont.appendChild(wrapper);
   });
 }
 
@@ -1349,7 +1368,9 @@ async function applyAtlasPreview(
   await new Promise<void>((resolve) => {
     const atlasImg = new Image();
     atlasImg.onload = async () => {
-      atlasFrames = await extractFramesFromAtlas(atlasImg, json);
+      const result = await extractFramesFromAtlas(atlasImg, json);
+      atlasFrames = result.frames;
+      atlasFrameNames = result.names;
       atlasOrderDirty = false;
       if (options?.selectAllFrames) {
         atlasSelectedFrameIndices = new Set(atlasFrames.map((_, i) => i));

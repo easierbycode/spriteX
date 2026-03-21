@@ -189,7 +189,20 @@
         image-rendering: crisp-edges;
         -ms-interpolation-mode: nearest-neighbor;
       }
-      #atlasFramesContainer img {
+      .atlas-frame-wrapper {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        margin: 4px;
+        border: 2px solid transparent;
+        border-radius: 4px;
+        padding: 2px;
+        vertical-align: top;
+      }
+      .atlas-frame-wrapper.selected {
+        border-color: var(--link-color);
+      }
+      .atlas-frame-wrapper img {
         background-color: #e0e0e0;
         background-image: linear-gradient(
             45deg,
@@ -212,11 +225,18 @@
         image-rendering: pixelated;
         image-rendering: crisp-edges;
         -ms-interpolation-mode: nearest-neighbor; /* IE fallback */
-        cursor: pointer;
-        border: 2px solid transparent;
+        display: block;
       }
-      #atlasFramesContainer img.selected {
-        border-color: var(--link-color);
+      .atlas-frame-label {
+        display: block;
+        text-align: center;
+        font-size: 10px;
+        max-width: 68px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        margin-top: 2px;
+        color: var(--text-color, #333);
       }
       #reorderAtlasFramesBtn.active {
         background-color: var(--link-color);
