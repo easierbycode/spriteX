@@ -26,15 +26,54 @@ function decodeBase64Png(raw) {
   return Buffer.from(cleaned, "base64");
 }
 
+/** Normalize atlas JSON that may be stored as a string (possibly double-encoded). */
+function normalizeAtlasJson(jsonVal) {
+  if (jsonVal == null) return null;
+  if (typeof jsonVal === "object") return jsonVal;
+  if (typeof jsonVal !== "string") return null;
+  let str = jsonVal.trim();
+  try {
+    const once = JSON.parse(str);
+    if (typeof once === "string") {
+      try { return JSON.parse(once); } catch { return null; }
+    }
+    return once;
+  } catch {
+    try {
+      str = str.replace(/^\uFEFF/, "").trim();
+      return JSON.parse(str);
+    } catch { return null; }
+  }
+}
+
+/** Decode hex-encoded frame keys produced by encodeAtlasFrameKey. */
+function decodeFrameKey(key) {
+  if (!key.startsWith("k_")) return key;
+  const hex = key.slice(2);
+  let result = "";
+  for (let i = 0; i < hex.length; i += 4) {
+    result += String.fromCodePoint(parseInt(hex.slice(i, i + 4), 16));
+  }
+  return result;
+}
+
+/** List all frame names in an atlas JSON object. */
+function listFrameNames(atlasJson) {
+  const framesMap = atlasJson?.frames ?? atlasJson?.textures?.[0]?.frames;
+  if (!framesMap || typeof framesMap !== "object") return [];
+  return Object.keys(framesMap).map(decodeFrameKey);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const gameName = args.gameName;
   const atlasName = args.atlasName;
   const outDir = args.outDir || "downloads";
+  const listOnly = args.list === "true";
 
   if (!atlasName) {
     console.error(
-      "Usage: node scripts/download-atlas.mjs --atlasName <name> [--gameName <name>] [--outDir <dir>]"
+      "Usage: node scripts/download-atlas.mjs --atlasName <name> [--gameName <name>] [--outDir <dir>] [--list]"
     );
     process.exit(1);
   }
@@ -65,14 +104,26 @@ async function main() {
     throw new Error(`Missing json payload at ${rtdbPath}/json`);
   }
 
+  // Normalize JSON (may be double-encoded string)
+  const atlasJson = normalizeAtlasJson(jsonRaw) ?? jsonRaw;
+
+  // --list mode: just print frame names and exit
+  if (listOnly) {
+    const names = listFrameNames(typeof atlasJson === "object" ? atlasJson : null);
+    console.log(JSON.stringify({ atlasName, rtdbPath, frameCount: names.length, frames: names }, null, 2));
+    return;
+  }
+
   const pngBuffer = decodeBase64Png(pngRaw);
 
   let jsonText;
-  if (typeof jsonRaw === "string") {
+  if (typeof atlasJson === "object") {
+    jsonText = `${JSON.stringify(atlasJson, null, 2)}\n`;
+  } else if (typeof atlasJson === "string") {
     try {
-      jsonText = `${JSON.stringify(JSON.parse(jsonRaw), null, 2)}\n`;
+      jsonText = `${JSON.stringify(JSON.parse(atlasJson), null, 2)}\n`;
     } catch {
-      jsonText = `${jsonRaw}\n`;
+      jsonText = `${atlasJson}\n`;
     }
   } else {
     jsonText = `${JSON.stringify(jsonRaw, null, 2)}\n`;
@@ -90,10 +141,8 @@ async function main() {
   console.log(
     JSON.stringify(
       {
-        gameName,
         atlasName,
-        gameName,
-        atlasName,
+        gameName: gameName || null,
         rtdbPath,
         files: {
           png: pngFilePath,
