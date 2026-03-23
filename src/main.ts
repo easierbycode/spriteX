@@ -1533,25 +1533,51 @@ async function loadCharacterAndPreview() {
 }
 
 /**
- * Triggers a file download by either calling the native Android interface
- * or by using the standard web anchor tag method as a fallback.
+ * Triggers a file download using the best available method:
+ * 1. Native Android interface (if available via WebView bridge)
+ * 2. Web Share API with File (for Android TWA/APK where <a download> fails)
+ * 3. Standard anchor tag download (web browsers and PWA)
  * @param url The data URL of the file to download.
  * @param filename The desired name of the file.
  * @param mimeType The MIME type of the file.
  */
-function triggerDownload(url: string, filename: string, mimeType: string) {
+async function triggerDownload(url: string, filename: string, mimeType: string) {
   // Check for a native Android interface
   if ((window as any).Android?.downloadFile) {
     (window as any).Android.downloadFile(url, filename, mimeType);
-  } else {
-    // Fallback for standard web browsers
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    return;
   }
+
+  // In Android standalone mode (TWA/APK), <a download> with data URLs fails.
+  // Use the Web Share API to let the user save the file.
+  const isAndroidStandalone = /Android/i.test(navigator.userAgent) &&
+    (window.matchMedia("(display-mode: standalone)").matches ||
+     window.matchMedia("(display-mode: fullscreen)").matches);
+
+  if (isAndroidStandalone && navigator.canShare) {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const file = new File([blob], filename, { type: mimeType });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file] });
+        return;
+      }
+    } catch (e) {
+      // User cancelled the share — don't fall through to anchor download
+      if (e instanceof DOMException && e.name === "AbortError") return;
+      // Other errors: fall through to standard download
+      console.warn("Share failed, falling back to standard download:", e);
+    }
+  }
+
+  // Fallback for standard web browsers
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 /**
