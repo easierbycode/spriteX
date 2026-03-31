@@ -717,7 +717,7 @@ async function extractFramesFromAtlas(
 ): Promise<{ frames: string[]; names: string[] }> {
   const frames: string[] = [];
   const names: string[] = [];
-  const frameData = atlasJson.frames || {};
+  const frameData = atlasJson.frames || atlasJson.textures?.[0]?.frames || {};
 
   for (const key in frameData) {
     const frame = frameData[key]?.frame;
@@ -1476,7 +1476,9 @@ async function importAtlasFromSelectedFiles() {
     ]);
     const json = JSON.parse(jsonText);
 
-    if (!json?.frames || typeof json.frames !== "object") {
+    const hasFrames = json?.frames && typeof json.frames === "object";
+    const hasTextures = Array.isArray(json?.textures) && json.textures[0]?.frames && typeof json.textures[0].frames === "object";
+    if (!hasFrames && !hasTextures) {
       alert("Invalid atlas JSON. Missing frames object.");
       return;
     }
