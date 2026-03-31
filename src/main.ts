@@ -731,7 +731,7 @@ async function extractFramesFromAtlas(
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(atlasImg, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
     frames.push(c.toDataURL("image/png"));
-    names.push(key);
+    names.push(frameData[key]?.filename || key);
   }
 
   return { frames, names };
