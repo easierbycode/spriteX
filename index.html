@@ -39,6 +39,7 @@
         --tip-text: #999;
         --link-color: #3b82f6;
       }
+      * { box-sizing: border-box; }
       body {
         font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
         margin: 0;
@@ -105,14 +106,95 @@
       input:checked + .slider:before {
         transform: translateX(26px);
       }
+
+      /* ── Collapsible panel (details/summary) ── */
+      details.panel {
+        background: var(--panel-bg);
+        border: 1px solid var(--panel-border);
+        border-radius: 8px;
+        margin-bottom: 12px;
+        transition: background .3s ease, border .3s ease;
+      }
+      details.panel > summary {
+        padding: 12px;
+        cursor: pointer;
+        user-select: none;
+        font-weight: 600;
+        font-size: 1rem;
+        list-style: none;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        -webkit-tap-highlight-color: transparent;
+      }
+      details.panel > summary::-webkit-details-marker { display: none; }
+      details.panel > summary::after {
+        content: '▸';
+        font-size: 0.85em;
+        color: var(--tip-text);
+        transition: transform 0.2s;
+        flex-shrink: 0;
+        margin-left: 8px;
+      }
+      details.panel[open] > summary::after {
+        transform: rotate(90deg);
+      }
+      details.panel[open] > summary {
+        border-bottom: 1px solid var(--panel-border);
+        margin-bottom: 0;
+      }
+      .panel-body {
+        padding: 12px;
+      }
+      .panel-actions {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        margin-right: 8px;
+      }
+
+      /* Legacy .panel class for non-collapsible panels */
       .panel {
         background: var(--panel-bg);
         border: 1px solid var(--panel-border);
         border-radius: 8px;
         padding: 12px;
-        margin-bottom: 16px;
+        margin-bottom: 12px;
         transition: background .3s ease, border .3s ease;
       }
+
+      /* ── Sub-sections (nested details) ── */
+      details.sub-section {
+        margin-top: 10px;
+        border-top: 1px solid var(--panel-border);
+        padding-top: 4px;
+      }
+      details.sub-section > summary {
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 0.9rem;
+        padding: 8px 0;
+        user-select: none;
+        color: var(--tip-text);
+        list-style: none;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        -webkit-tap-highlight-color: transparent;
+      }
+      details.sub-section > summary::-webkit-details-marker { display: none; }
+      details.sub-section > summary::before {
+        content: '▸';
+        font-size: 0.8em;
+        transition: transform 0.2s;
+      }
+      details.sub-section[open] > summary::before {
+        transform: rotate(90deg);
+      }
+      details.sub-section[open] > summary {
+        color: var(--text-color);
+      }
+
       .row {
         display: flex;
         gap: 8px;
@@ -156,31 +238,29 @@
         top: 0;
         pointer-events: auto;
       }
+
+      /* Checkerboard for sprite thumbnails */
+      .checker-bg {
+        background-color: #e0e0e0;
+        background-image: linear-gradient(
+            45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc),
+          linear-gradient(
+            45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc);
+        background-size: 10px 10px;
+        background-position: 0 0, 5px 5px;
+      }
       #selectedSpritesContainer img {
         background-color: #e0e0e0;
         background-image: linear-gradient(
-            45deg,
-            #ccc 25%,
-            transparent 25%,
-            transparent 75%,
-            #ccc 75%,
-            #ccc
-          ),
+            45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc),
           linear-gradient(
-            45deg,
-            #ccc 25%,
-            transparent 25%,
-            transparent 75%,
-            #ccc 75%,
-            #ccc
-          );
+            45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc);
         background-size: 10px 10px;
         background-position: 0 0, 5px 5px;
         image-rendering: pixelated;
         image-rendering: crisp-edges;
-        -ms-interpolation-mode: nearest-neighbor; /* IE fallback */
+        -ms-interpolation-mode: nearest-neighbor;
       }
-      /* Ensure preview images remain crisp when scaled */
       #characterPreviewImg,
       #selectionPreviewImg,
       #atlasPreviewImg,
@@ -205,26 +285,14 @@
       .atlas-frame-wrapper img {
         background-color: #e0e0e0;
         background-image: linear-gradient(
-            45deg,
-            #ccc 25%,
-            transparent 25%,
-            transparent 75%,
-            #ccc 75%,
-            #ccc
-          ),
+            45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc),
           linear-gradient(
-            45deg,
-            #ccc 25%,
-            transparent 25%,
-            transparent 75%,
-            #ccc 75%,
-            #ccc
-          );
+            45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc);
         background-size: 10px 10px;
         background-position: 0 0, 5px 5px;
         image-rendering: pixelated;
         image-rendering: crisp-edges;
-        -ms-interpolation-mode: nearest-neighbor; /* IE fallback */
+        -ms-interpolation-mode: nearest-neighbor;
         display: block;
       }
       .atlas-frame-label {
@@ -244,8 +312,8 @@
         color: #fff;
       }
       .preview-container {
-        min-width: 128px;
-        min-height: 128px;
+        min-width: 100px;
+        min-height: 100px;
         max-width: 100%;
         border: 1px solid var(--panel-border);
         display: flex;
@@ -271,10 +339,16 @@
         color: var(--btn-text);
         border-radius: 4px;
         cursor: pointer;
+        white-space: nowrap;
+        font-size: 0.9rem;
       }
       .btn:disabled {
         background: var(--btn-disabled-bg);
         cursor: not-allowed;
+      }
+      .btn-sm {
+        padding: 4px 8px;
+        font-size: 0.85rem;
       }
       input[type="text"],
       input[type="url"],
@@ -284,7 +358,7 @@
         background: var(--input-bg);
         color: var(--text-color);
         border-radius: 4px;
-        min-width: 260px;
+        min-width: 180px;
       }
       input[type="color"] {
         width: 40px;
@@ -293,19 +367,20 @@
         border: 1px solid var(--input-border);
         border-radius: 4px;
       }
-      .grid-2 {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-      }
-      @media (max-width: 900px) {
-        .grid-2 {
-          grid-template-columns: 1fr;
-        }
+      input[type="number"] {
+        padding: 6px 8px;
+        border: 1px solid var(--input-border);
+        background: var(--input-bg);
+        color: var(--text-color);
+        border-radius: 4px;
       }
       .subtitle {
         font-weight: 600;
         margin-bottom: 6px;
+      }
+      .tip-text {
+        color: var(--tip-text);
+        font-size: 0.9em;
       }
       .modal {
         position: fixed;
@@ -339,6 +414,130 @@
         color: var(--text-color);
         background: color-mix(in srgb, var(--accent) 12%, transparent);
       }
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .divider {
+        border: none;
+        border-top: 1px solid var(--panel-border);
+        margin: 10px 0;
+      }
+
+      /* ── Responsive: Tablet ── */
+      @media (max-width: 900px) {
+        .grid-2 {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* ── Responsive: Mobile ── */
+      @media (max-width: 768px) {
+        body {
+          padding: 8px;
+        }
+        h1 {
+          font-size: 1.3rem;
+        }
+        details.panel {
+          margin-bottom: 8px;
+        }
+        details.panel > summary {
+          padding: 10px;
+          font-size: 0.95rem;
+        }
+        .panel-body {
+          padding: 10px;
+        }
+        .header {
+          margin-bottom: 8px;
+        }
+        .header-controls {
+          gap: 10px;
+        }
+
+        /* Full-width inputs */
+        input[type="text"],
+        input[type="url"],
+        select {
+          min-width: 0;
+          width: 100%;
+        }
+
+        /* Larger touch targets */
+        .btn {
+          min-height: 40px;
+          padding: 8px 14px;
+        }
+        .btn-sm {
+          min-height: 36px;
+          padding: 6px 10px;
+        }
+        input[type="color"] {
+          width: 44px;
+          height: 40px;
+        }
+        input[type="number"] {
+          height: 40px;
+        }
+        input[type="file"] {
+          font-size: 0.85rem;
+          max-width: 100%;
+        }
+
+        /* Canvas respects viewport */
+        .canv-wrap {
+          max-height: 50vh;
+        }
+
+        /* Reduce preview sizes */
+        .preview-container {
+          min-height: 80px;
+          min-width: 80px;
+        }
+
+        /* Compact atlas frames */
+        .atlas-frame-wrapper {
+          margin: 2px;
+        }
+
+        /* Row adjustments for mobile - allow stacking */
+        .row-stack-mobile {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .row-stack-mobile .btn {
+          width: 100%;
+          text-align: center;
+        }
+      }
+
+      /* ── Responsive: Small phone ── */
+      @media (max-width: 480px) {
+        body {
+          padding: 6px;
+        }
+        h1 {
+          font-size: 1.15rem;
+        }
+        details.panel > summary {
+          padding: 8px 10px;
+          font-size: 0.9rem;
+        }
+        .panel-body {
+          padding: 8px;
+        }
+        .btn {
+          padding: 8px 10px;
+          font-size: 0.85rem;
+        }
+        .panel-actions .btn-sm {
+          padding: 4px 8px;
+          font-size: 0.8rem;
+          min-height: 32px;
+        }
+      }
     </style>
   </head>
   <body>
@@ -353,216 +552,207 @@
       </div>
     </div>
 
-    <div class="panel">
-      <div class="row">
-        <input id="fileUrl" type="url" placeholder="Image URL" />
-        <button id="btnAddUrl" class="btn">Load URL</button>
-        <input id="fileInput" type="file" accept="image/*" />
-        <button id="detectSpritesBtn" class="btn">Auto Detect Sprites</button>
-        <label for="bgColorInput">BG</label>
-        <input id="bgColorInput" type="color" value="#000000" />
-        <button id="bgColorPickBtn" class="btn" title="Pick background from canvas">Pick BG</button>
-        <span id="bgStatus" style="display: none; font-style: italic; color: var(--tip-text);">Transparent</span>
-
-        <!-- Erase Color Controls -->
-        <label for="eraseColorInput">Erase</label>
-        <input id="eraseColorInput" type="color" value="#000000" />
-        <label for="eraseToleranceInput">Tol</label>
-        <input id="eraseToleranceInput" type="number" value="12" min="0" max="96" style="width: 72px" />
-        <button id="eraseColorPickBtn" class="btn" title="Pick a color to erase from canvas">Pick Erase</button>
-        <button id="eraseApplyBtn" class="btn" title="Remove pixels matching the erase color within tolerance">Remove Color</button>
-      </div>
-      <div style="margin-top: 6px; color: var(--tip-text); font-size: 0.95em">
-        Tip: After detection, tap sprite boxes on the canvas to select or
-        deselect.
-      </div>
-    </div>
-
-    <div class="panel grid-2">
-      <div>
-        <div class="row" style="margin-bottom: 6px;">
-            <div class="subtitle">Canvas</div>
-            <div style="margin-left: auto;">
-                <button id="canvasZoomBtn" class="btn">Zoom: 1x</button>
-                <button id="canvasFullscreenBtn" class="btn">Fullscreen</button>
-            </div>
+    <!-- ══════ 1. Load & Detect ══════ -->
+    <details class="panel" open>
+      <summary>Load &amp; Detect</summary>
+      <div class="panel-body">
+        <div class="row row-stack-mobile">
+          <input id="fileUrl" type="url" placeholder="Image URL" />
+          <button id="btnAddUrl" class="btn">Load URL</button>
         </div>
+        <div class="row" style="margin-top: 6px;">
+          <input id="fileInput" type="file" accept="image/*" />
+          <button id="detectSpritesBtn" class="btn">Detect Sprites</button>
+        </div>
+
+        <details class="sub-section">
+          <summary>Color Controls</summary>
+          <div class="row" style="margin-top: 4px;">
+            <label for="bgColorInput">BG</label>
+            <input id="bgColorInput" type="color" value="#000000" />
+            <button id="bgColorPickBtn" class="btn btn-sm" title="Pick background from canvas">Pick BG</button>
+            <span id="bgStatus" style="display: none; font-style: italic; color: var(--tip-text);">Transparent</span>
+          </div>
+          <div class="row" style="margin-top: 6px;">
+            <label for="eraseColorInput">Erase</label>
+            <input id="eraseColorInput" type="color" value="#000000" />
+            <label for="eraseToleranceInput">Tol</label>
+            <input id="eraseToleranceInput" type="number" value="12" min="0" max="96" style="width: 72px" />
+            <button id="eraseColorPickBtn" class="btn btn-sm" title="Pick a color to erase from canvas">Pick Erase</button>
+            <button id="eraseApplyBtn" class="btn btn-sm" title="Remove pixels matching the erase color within tolerance">Remove Color</button>
+          </div>
+        </details>
+
+        <div class="tip-text" style="margin-top: 6px;">
+          Tip: After detection, tap sprite boxes on the canvas to select or deselect.
+        </div>
+      </div>
+    </details>
+
+    <!-- ══════ 2. Canvas ══════ -->
+    <details class="panel" open>
+      <summary>
+        Canvas
+        <span class="panel-actions">
+          <button id="canvasZoomBtn" class="btn btn-sm">Zoom: 1x</button>
+          <button id="canvasFullscreenBtn" class="btn btn-sm" title="Fullscreen">&#x26F6;</button>
+        </span>
+      </summary>
+      <div class="panel-body">
         <div id="canvasContainer" class="canv-wrap">
           <canvas id="originalCanvas" width="640" height="480"></canvas>
           <canvas id="overlayCanvas" width="640" height="480"></canvas>
         </div>
       </div>
-      <div>
-        <div class="subtitle">Selected Sprites</div>
+    </details>
+
+    <!-- ══════ 3. Selected Sprites ══════ -->
+    <details class="panel" open>
+      <summary>Selected Sprites</summary>
+      <div class="panel-body">
         <div id="selectedSpritesContainer">
-          No sprites selected. After "Auto Detect Sprites", tap sprites on the
-          canvas to select or deselect them.
+          No sprites selected. After detection, tap sprites on the canvas to select.
         </div>
 
-        <hr style="border-color: var(--panel-border); margin: 12px 0;">
-
-        <!-- Single Sprite Preview -->
-        <div class="row">
-            <label for="spritePreviewSelect">Preview Sprite</label>
-            <select id="spritePreviewSelect" style="min-width: 150px;">
-                <option value="">-- Select --</option>
-            </select>
-        </div>
-        <div class="row" style="margin-top: 8px">
-            <div id="spritePreviewContainer" class="preview-container bg-checkered">
-                <img id="spritePreviewImg" class="preview-img" alt="Sprite Preview" />
+        <details class="sub-section">
+          <summary>Selection Preview</summary>
+          <div class="row">
+            <label for="selectionFpsInput">FPS</label>
+            <input id="selectionFpsInput" type="number" value="6" min="1" max="60" style="width: 72px" />
+            <button id="selectionPreviewBtn" class="btn btn-sm">Preview</button>
+            <button id="selectionBgBtn" class="btn btn-sm">BG</button>
+            <button id="selectionFullscreenBtn" class="btn btn-sm" title="Fullscreen">&#x26F6;</button>
+          </div>
+          <div class="row" style="margin-top: 8px">
+            <div id="selectionPreviewContainer" class="preview-container bg-checkered">
+              <img id="selectionPreviewImg" class="preview-img" alt="Selected Animation Preview" />
             </div>
-        </div>
+          </div>
+        </details>
+      </div>
+    </details>
 
-        <!-- Selection Animation Preview Controls -->
-        <div class="row" style="margin-top: 10px">
-          <label for="selectionFpsInput">Preview FPS</label>
-          <input
-            id="selectionFpsInput"
-            type="number"
-            value="6"
-            min="1"
-            max="60"
-            style="width: 72px"
-          />
-          <button id="selectionPreviewBtn" class="btn">Preview Selected</button>
-          <button id="selectionBgBtn" class="btn">Toggle BG</button>
-          <button id="selectionFullscreenBtn" class="btn">Fullscreen</button>
+    <!-- ══════ 4. Save Sprites ══════ -->
+    <details class="panel">
+      <summary id="spriteSaveSubtitle">Save Sprites to Firebase</summary>
+      <div class="panel-body">
+        <div class="row row-stack-mobile">
+          <input id="spriteNamePrefix" type="text" placeholder="Sprite name prefix (e.g., enemy)" />
+          <button id="saveSpritesFirebaseBtn" class="btn">Save Sprites</button>
+        </div>
+        <div class="tip-text" style="margin-top: 4px;">Sprites saved without data: prefix under sprites/*</div>
+
+        <hr class="divider">
+
+        <div class="row">
+          <label for="spritePreviewSelect">Preview Sprite</label>
+          <select id="spritePreviewSelect">
+            <option value="">-- Select --</option>
+          </select>
         </div>
         <div class="row" style="margin-top: 8px">
-          <div id="selectionPreviewContainer" class="preview-container bg-checkered">
-            <img
-              id="selectionPreviewImg"
-              class="preview-img"
-              alt="Selected Animation Preview"
-            />
+          <div id="spritePreviewContainer" class="preview-container bg-checkered">
+            <img id="spritePreviewImg" class="preview-img" alt="Sprite Preview" />
           </div>
         </div>
       </div>
-    </div>
+    </details>
 
-    <div class="panel grid-2">
-      <div>
-        <div class="subtitle" id="spriteSaveSubtitle">Save Sprites to Firebase</div>
-        <div class="row">
-          <input
-            id="spriteNamePrefix"
-            type="text"
-            placeholder="Sprite name prefix (e.g., enemy)"
-          />
-          <button id="saveSpritesFirebaseBtn" class="btn">
-            Save Sprites (RTDB)
-          </button>
-        </div>
-        <div>Sprites saved without data: prefix under sprites/*</div>
-      </div>
-
-      <div>
+    <!-- ══════ 5. Atlas Builder ══════ -->
+    <details class="panel">
+      <summary id="builderSubtitle">Atlas Builder</summary>
+      <div class="panel-body">
         <div class="row" style="margin-bottom: 8px;">
-          <label for="builderTypeSelect">Builder</label>
+          <label for="builderTypeSelect">Mode</label>
           <select id="builderTypeSelect" style="min-width: 170px;">
             <option value="atlas">Atlas Builder</option>
             <option value="font">Font Builder</option>
           </select>
         </div>
-        <div class="subtitle" id="builderSubtitle">Atlas Builder</div>
         <div class="row" style="margin-bottom: 8px;">
-            <select id="atlasSelect">
-              <option value="">-- Select an atlas --</option>
-            </select>
+          <select id="atlasSelect">
+            <option value="">-- Select an atlas --</option>
+          </select>
         </div>
         <div class="row">
-          <input
-            id="atlasNameInput"
-            type="text"
-            placeholder="Atlas name (e.g., enemy_atlas)"
-          />
-          <button id="buildAtlasBtn" class="btn">Build Atlas</button>
-          <button id="openImportAtlasModalBtn" class="btn">Import Atlas</button>
-          <button id="trimAtlasBtn" class="btn" style="display: none;">Trim Atlas</button>
-          <button id="saveAtlasFirebaseBtn" class="btn" disabled>
-            Save Atlas (RTDB)
-          </button>
-          <button id="downloadAtlasJsonBtn" class="btn" disabled>Download JSON</button>
-          <button id="downloadAtlasPngBtn" class="btn" disabled>Download PNG</button>
+          <input id="atlasNameInput" type="text" placeholder="Atlas name (e.g., enemy_atlas)" />
+        </div>
+        <div class="row" style="margin-top: 6px;">
+          <button id="buildAtlasBtn" class="btn">Build</button>
+          <button id="openImportAtlasModalBtn" class="btn">Import</button>
+          <button id="trimAtlasBtn" class="btn" style="display: none;">Trim</button>
+          <button id="saveAtlasFirebaseBtn" class="btn" disabled>Save</button>
+          <button id="downloadAtlasJsonBtn" class="btn" disabled>JSON</button>
+          <button id="downloadAtlasPngBtn" class="btn" disabled>PNG</button>
         </div>
         <div class="row" style="margin-top: 8px">
-          <img
-            id="atlasPreviewImg"
-            alt="Atlas Preview"
-            style="max-width: 100%; border: 1px solid var(--panel-border)"
-          />
+          <img id="atlasPreviewImg" alt="Atlas Preview" style="max-width: 100%; border: 1px solid var(--panel-border)" />
         </div>
-        <div>Atlases saved as atlases/{name} with json + png (DataURL).</div>
+        <div class="tip-text" style="margin-top: 4px;">Atlases saved as atlases/{name} with json + png (DataURL).</div>
 
-        <div class="row" style="margin-top: 12px; align-items: center; gap: 8px;">
-          <div class="subtitle" style="margin-top: 0; margin-bottom: 0;">Atlas Frames</div>
-          <button id="reorderAtlasFramesBtn" class="btn" type="button" title="Enable/disable frame reordering" style="padding: 4px 8px;" aria-pressed="false">↕ Reorder</button>
+        <hr class="divider">
+
+        <div class="row" style="align-items: center; gap: 8px;">
+          <div class="subtitle" style="margin: 0;">Atlas Frames</div>
+          <button id="reorderAtlasFramesBtn" class="btn btn-sm" type="button" title="Enable/disable frame reordering" aria-pressed="false">&#x2195; Reorder</button>
         </div>
         <div id="atlasFramesContainer" class="row" style="padding: 4px; border: 1px solid var(--panel-border); min-height: 50px;">
           Atlas not built yet.
         </div>
 
-        <!-- Atlas Animation Preview Controls -->
-        <div class="row" style="margin-top: 10px">
-          <label for="atlasFpsInput">Preview FPS</label>
-          <input
-            id="atlasFpsInput"
-            type="number"
-            value="6"
-            min="1"
-            max="60"
-            style="width: 72px"
-          />
-          <button id="atlasPreviewBtn" class="btn">Preview Atlas Anim</button>
-          <button id="atlasBgBtn" class="btn">Toggle BG</button>
-          <button id="atlasFullscreenBtn" class="btn">Fullscreen</button>
-          <label for="gifScaleInput">Scale</label>
-          <select id="gifScaleInput" style="width: 72px">
-            <option value="1">1x</option>
-            <option value="2">2x</option>
-            <option value="4">4x</option>
+        <details class="sub-section">
+          <summary>Animation Preview</summary>
+          <div class="row">
+            <label for="atlasFpsInput">FPS</label>
+            <input id="atlasFpsInput" type="number" value="6" min="1" max="60" style="width: 72px" />
+            <button id="atlasPreviewBtn" class="btn btn-sm">Preview</button>
+            <button id="atlasBgBtn" class="btn btn-sm">BG</button>
+            <button id="atlasFullscreenBtn" class="btn btn-sm" title="Fullscreen">&#x26F6;</button>
+            <label for="gifScaleInput">Scale</label>
+            <select id="gifScaleInput" style="width: 72px">
+              <option value="1">1x</option>
+              <option value="2">2x</option>
+              <option value="4">4x</option>
+            </select>
+            <button id="downloadGifBtn" class="btn btn-sm" style="width: 36px; height: 36px; padding: 4px;">
+              <svg xmlns="http://www.w3.org/2000/svg" enable-background="new 0 0 24 24" height="100%" viewBox="0 0 24 24" width="100%" fit="" preserveAspectRatio="xMidYMid meet" focusable="false" style="fill: white;"><g><rect fill="none" height="24" width="24" x="0"></rect></g><g><path d="M18,15v3H6v-3H4v3c0,1.1,0.9,2,2,2h12c1.1,0,2-0.9,2-2v-3H18z M17,11l-1.41-1.41L13,12.17V4h-2v8.17L8.41,9.59L7,11l5,5 L17,11z"></path></g></svg>
+            </button>
+          </div>
+          <div class="row" style="margin-top: 8px">
+            <div id="atlasAnimPreviewContainer" class="preview-container bg-checkered">
+              <img id="atlasAnimPreviewImg" class="preview-img" alt="Atlas Animation Preview" />
+            </div>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <!-- ══════ 6. Character Preview ══════ -->
+    <details class="panel">
+      <summary>Character Preview</summary>
+      <div class="panel-body">
+        <div class="row">
+          <select id="characterSelect">
+            <option value="">-- Select a character --</option>
           </select>
-          <button id="downloadGifBtn" class="btn" style="width: 40px; height: 40px; padding: 4px;">
-            <svg xmlns="http://www.w3.org/2000/svg" enable-background="new 0 0 24 24" height="100%" viewBox="0 0 24 24" width="100%" fit="" preserveAspectRatio="xMidYMid meet" focusable="false" style="fill: white;"><g><rect fill="none" height="24" width="24" x="0"></rect></g><g><path d="M18,15v3H6v-3H4v3c0,1.1,0.9,2,2,2h12c1.1,0,2-0.9,2-2v-3H18z M17,11l-1.41-1.41L13,12.17V4h-2v8.17L8.41,9.59L7,11l5,5 L17,11z"></path></g></svg>
-          </button>
+          <button id="loadCharacterBtn" class="btn">Load</button>
+        </div>
+        <div class="row" style="margin-top: 6px;">
+          <button id="downloadCharJsonBtn" class="btn btn-sm">JSON</button>
+          <button id="downloadCharPngBtn" class="btn btn-sm">PNG</button>
+          <span>FPS: <span id="frameRateSpan">-</span></span>
+          <button id="characterBgBtn" class="btn btn-sm">BG</button>
+          <button id="characterFullscreenBtn" class="btn btn-sm" title="Fullscreen">&#x26F6;</button>
         </div>
         <div class="row" style="margin-top: 8px">
-          <div id="atlasAnimPreviewContainer" class="preview-container bg-checkered">
-            <img
-              id="atlasAnimPreviewImg"
-              class="preview-img"
-              alt="Atlas Animation Preview"
-            />
+          <div id="characterPreviewContainer" class="preview-container bg-checkered">
+            <img id="characterPreviewImg" class="preview-img" alt="Character Preview" />
           </div>
         </div>
       </div>
-    </div>
+    </details>
 
-    <div class="panel">
-      <div class="subtitle">Character Preview</div>
-      <div class="row">
-        <select id="characterSelect">
-          <option value="">-- Select a character --</option>
-        </select>
-        <button id="loadCharacterBtn" class="btn">Load Preview</button>
-        <button id="downloadCharJsonBtn" class="btn">Download JSON</button>
-        <button id="downloadCharPngBtn" class="btn">Download PNG</button>
-        <div>FPS: <span id="frameRateSpan">-</span></div>
-        <button id="characterBgBtn" class="btn">Toggle BG</button>
-        <button id="characterFullscreenBtn" class="btn">Fullscreen</button>
-      </div>
-      <div class="row" style="margin-top: 8px">
-          <div id="characterPreviewContainer" class="preview-container bg-checkered">
-            <img
-              id="characterPreviewImg"
-              class="preview-img"
-              alt="Character Preview"
-            />
-          </div>
-      </div>
-    </div>
-
+    <!-- ══════ Import Atlas Modal ══════ -->
     <div id="importAtlasModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="importAtlasTitle">
       <div class="modal-content">
         <div class="row" style="justify-content: space-between; align-items: center; margin-bottom: 8px;">
