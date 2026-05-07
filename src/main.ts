@@ -81,6 +81,16 @@ let splitMenuEl: HTMLDivElement | null = null;
 const spriteSplitChoices = new Map<number, SpriteSplitChoice>();
 let splitLongPressTimer: number | null = null;
 
+// Join groups: combine multiple detected sprite indices into a single piece.
+type JoinGroupId = number;
+const joinGroups = new Map<JoinGroupId, number[]>(); // id -> sorted member sprite indices
+const spriteToGroup = new Map<number, JoinGroupId>(); // sprite index -> group id
+let nextJoinGroupId = 1;
+
+type RenderUnit =
+  | { kind: "single"; spriteIndex: number; rect: DetectedSprite }
+  | { kind: "group"; groupId: JoinGroupId; members: number[]; rect: DetectedSprite };
+
 function $(id: string) {
   return document.getElementById(id);
 }
@@ -122,8 +132,14 @@ function setupCanvases() {
     );
 
     if (idx >= 0) {
-      if (selected.has(idx)) selected.delete(idx);
-      else selected.add(idx);
+      if (selected.has(idx)) {
+        selected.delete(idx);
+        // Detach from any join group when deselected so the group reflects
+        // only currently-active selections.
+        removeFromAnyGroup(idx);
+      } else {
+        selected.add(idx);
+      }
       drawOverlay();
       renderSelectedThumbs();
       onSelectionChanged();
@@ -199,13 +215,52 @@ function drawOverlay() {
 
   for (let i = 0; i < detected.length; i++) {
     const s = detected[i];
-    overlayCtx.strokeStyle = selected.has(i)
-      ? "rgba(0,200,0,0.9)"
-      : "rgba(255,0,0,0.85)";
+    const inActiveGroup =
+      spriteToGroup.has(i) && selected.has(i) && groupHasMultipleSelected(i);
+    if (inActiveGroup) {
+      overlayCtx.strokeStyle = "rgba(0,180,255,0.85)";
+    } else {
+      overlayCtx.strokeStyle = selected.has(i)
+        ? "rgba(0,200,0,0.9)"
+        : "rgba(255,0,0,0.85)";
+    }
     overlayCtx.strokeRect(s.x + 0.5, s.y + 0.5, s.w - 1, s.h - 1);
   }
+
+  // Highlight active join groups with a thicker bounding outline.
+  overlayCtx.lineWidth = 2;
+  overlayCtx.strokeStyle = "rgba(255,140,0,0.95)";
+  overlayCtx.setLineDash([6, 3]);
+  const drawnGroups = new Set<JoinGroupId>();
+  for (const idx of selected) {
+    const gid = spriteToGroup.get(idx);
+    if (gid === undefined || drawnGroups.has(gid)) continue;
+    const members = (joinGroups.get(gid) || []).filter((m) => selected.has(m));
+    if (members.length < 2) continue;
+    const rect = getGroupBounds(members);
+    if (!rect) continue;
+    overlayCtx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+    drawnGroups.add(gid);
+  }
+  overlayCtx.setLineDash([]);
+  overlayCtx.lineWidth = 1;
+
   // Add a data attribute to signal test scripts that drawing is complete.
   overlayCanvas.dataset.drawn = String(detected.length);
+}
+
+function groupHasMultipleSelected(spriteIdx: number): boolean {
+  const gid = spriteToGroup.get(spriteIdx);
+  if (gid === undefined) return false;
+  const members = joinGroups.get(gid) || [];
+  let count = 0;
+  for (const m of members) {
+    if (selected.has(m)) {
+      count++;
+      if (count >= 2) return true;
+    }
+  }
+  return false;
 }
 
 function renderSelectedThumbs() {
@@ -222,9 +277,52 @@ function renderSelectedThumbs() {
   }
 
   const smallest = getSmallestSelectedDimensions();
+  const units = getSelectedRenderUnits();
 
-  selected.forEach((i) => {
-    const s = detected[i];
+  // Toolbar with Join / Clear-joins controls.
+  const toolbar = document.createElement("div");
+  toolbar.style.display = "flex";
+  toolbar.style.flexWrap = "wrap";
+  toolbar.style.gap = "6px";
+  toolbar.style.marginBottom = "6px";
+
+  const joinBtn = document.createElement("button");
+  joinBtn.type = "button";
+  joinBtn.className = "btn";
+  joinBtn.textContent = `Join Selected (${selected.size})`;
+  joinBtn.title =
+    "Combine the selected pieces into a single sprite (their bounding box).";
+  const canJoin = selected.size >= 2 && !selectionAllInSameGroup();
+  joinBtn.disabled = !canJoin;
+  joinBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    if (joinSelectedSprites() == null) return;
+    drawOverlay();
+    renderSelectedThumbs();
+    onSelectionChanged();
+  });
+  toolbar.appendChild(joinBtn);
+
+  if (joinGroups.size > 0) {
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "btn";
+    clearBtn.textContent = "Clear All Joins";
+    clearBtn.title = "Dissolve all join groups, restoring individual pieces.";
+    clearBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      clearJoinGroups();
+      drawOverlay();
+      renderSelectedThumbs();
+      onSelectionChanged();
+    });
+    toolbar.appendChild(clearBtn);
+  }
+
+  cont.appendChild(toolbar);
+
+  units.forEach((unit) => {
+    const s = unit.rect;
     const c = document.createElement("canvas");
     c.width = s.w;
     c.height = s.h;
@@ -243,12 +341,41 @@ function renderSelectedThumbs() {
     img.src = c.toDataURL("image/png");
     img.style.width = "96px";
     img.style.height = "auto";
-    img.style.border = "1px dashed #aaa";
-    img.dataset.spriteIndex = String(i);
+    img.style.border =
+      unit.kind === "group" ? "2px solid rgba(255,140,0,0.95)" : "1px dashed #aaa";
 
     const info = document.createElement("small");
     info.style.opacity = "0.8";
     info.style.fontSize = "11px";
+
+    if (unit.kind === "group") {
+      img.dataset.joinGroupId = String(unit.groupId);
+      info.textContent = `Joined ×${unit.members.length}`;
+
+      const unjoinBtn = document.createElement("button");
+      unjoinBtn.type = "button";
+      unjoinBtn.className = "btn";
+      unjoinBtn.textContent = "Unjoin";
+      unjoinBtn.style.marginTop = "2px";
+      unjoinBtn.style.fontSize = "11px";
+      unjoinBtn.style.padding = "2px 6px";
+      unjoinBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        dissolveJoinGroup(unit.groupId);
+        drawOverlay();
+        renderSelectedThumbs();
+        onSelectionChanged();
+      });
+
+      wrap.appendChild(img);
+      wrap.appendChild(info);
+      wrap.appendChild(unjoinBtn);
+      cont.appendChild(wrap);
+      return;
+    }
+
+    const i = unit.spriteIndex;
+    img.dataset.spriteIndex = String(i);
 
     const splitChoice = spriteSplitChoices.get(i);
     info.textContent = splitChoice
@@ -361,13 +488,20 @@ function splitSpriteRect(
 }
 
 function getSelectedBoxesExpanded(): DetectedSprite[] {
-  const indices = getSortedSelectedIndices();
+  const units = getSelectedRenderUnits();
   const boxes: DetectedSprite[] = [];
   const smallest = getSmallestSelectedDimensions();
 
-  indices.forEach((idx) => {
-    const sprite = detected[idx];
-    if (!sprite) return;
+  units.forEach((unit) => {
+    if (unit.kind === "group") {
+      // Joined pieces are emitted as a single combined rect; splits are not
+      // applicable to joined groups.
+      boxes.push(unit.rect);
+      return;
+    }
+
+    const idx = unit.spriteIndex;
+    const sprite = unit.rect;
     const split = spriteSplitChoices.get(idx);
 
     if (!split) {
@@ -389,6 +523,133 @@ function getSelectedBoxesExpanded(): DetectedSprite[] {
   });
 
   return boxes;
+}
+
+function clearJoinGroups() {
+  joinGroups.clear();
+  spriteToGroup.clear();
+}
+
+function removeFromAnyGroup(idx: number) {
+  const gid = spriteToGroup.get(idx);
+  if (gid === undefined) return;
+  spriteToGroup.delete(idx);
+  const members = joinGroups.get(gid);
+  if (!members) return;
+  const remaining = members.filter((i) => i !== idx);
+  if (remaining.length < 2) {
+    for (const m of remaining) spriteToGroup.delete(m);
+    joinGroups.delete(gid);
+  } else {
+    joinGroups.set(gid, remaining);
+  }
+}
+
+function dissolveJoinGroup(gid: JoinGroupId) {
+  const members = joinGroups.get(gid);
+  if (!members) return;
+  for (const idx of members) spriteToGroup.delete(idx);
+  joinGroups.delete(gid);
+}
+
+function getGroupBounds(members: number[]): DetectedSprite | null {
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  let any = false;
+  for (const idx of members) {
+    const s = detected[idx];
+    if (!s) continue;
+    any = true;
+    if (s.x < minX) minX = s.x;
+    if (s.y < minY) minY = s.y;
+    if (s.x + s.w > maxX) maxX = s.x + s.w;
+    if (s.y + s.h > maxY) maxY = s.y + s.h;
+  }
+  if (!any) return null;
+  return {
+    x: minX,
+    y: minY,
+    w: Math.max(1, maxX - minX),
+    h: Math.max(1, maxY - minY),
+  };
+}
+
+function joinSelectedSprites(): JoinGroupId | null {
+  const indices = [...selected];
+  if (indices.length < 2) return null;
+
+  // Detach members from any prior groups, then create a fresh group.
+  for (const idx of indices) removeFromAnyGroup(idx);
+  // Joining replaces splits on the involved members, since splits don't apply
+  // to combined pieces.
+  for (const idx of indices) spriteSplitChoices.delete(idx);
+
+  const sorted = [...new Set(indices)].sort((a, b) => a - b);
+  const id = nextJoinGroupId++;
+  joinGroups.set(id, sorted);
+  for (const idx of sorted) spriteToGroup.set(idx, id);
+  return id;
+}
+
+function selectionAllInSameGroup(): boolean {
+  if (selected.size < 2) return false;
+  const gids = new Set<JoinGroupId>();
+  for (const idx of selected) {
+    const gid = spriteToGroup.get(idx);
+    if (gid === undefined) return false;
+    gids.add(gid);
+  }
+  if (gids.size !== 1) return false;
+  // All currently-selected sprites map to one group, but the group may
+  // contain other selected members not in `selected`. Compare member sets.
+  const onlyGid = gids.values().next().value as JoinGroupId;
+  const members = joinGroups.get(onlyGid) || [];
+  if (members.length !== selected.size) return false;
+  for (const m of members) if (!selected.has(m)) return false;
+  return true;
+}
+
+function getSelectedRenderUnits(): RenderUnit[] {
+  const visited = new Set<number>();
+  const units: RenderUnit[] = [];
+
+  for (const idx of getSortedSelectedIndices()) {
+    if (visited.has(idx)) continue;
+    const gid = spriteToGroup.get(idx);
+    if (gid !== undefined) {
+      const members = joinGroups.get(gid) || [];
+      const selectedMembers = members.filter((m) => selected.has(m));
+      if (selectedMembers.length >= 2) {
+        const rect = getGroupBounds(selectedMembers);
+        if (rect) {
+          units.push({
+            kind: "group",
+            groupId: gid,
+            members: selectedMembers,
+            rect,
+          });
+          for (const m of selectedMembers) visited.add(m);
+          continue;
+        }
+      }
+    }
+    const s = detected[idx];
+    if (!s) {
+      visited.add(idx);
+      continue;
+    }
+    units.push({ kind: "single", spriteIndex: idx, rect: s });
+    visited.add(idx);
+  }
+
+  units.sort((a, b) => {
+    if (a.rect.x !== b.rect.x) return a.rect.x - b.rect.x;
+    return a.rect.y - b.rect.y;
+  });
+
+  return units;
 }
 
 function createSplitIcon(axis: "h" | "v", parts: number): HTMLCanvasElement {
@@ -606,6 +867,11 @@ function onSelectionChanged() {
   for (const key of [...spriteSplitChoices.keys()]) {
     if (!selected.has(key)) spriteSplitChoices.delete(key);
   }
+  // Drop join group members that are no longer selected, dissolving groups
+  // that fall below two members.
+  for (const idx of [...spriteToGroup.keys()]) {
+    if (!selected.has(idx)) removeFromAnyGroup(idx);
+  }
   // Keep preview in sync with selection
   refreshSelectionPreviewFrames(true);
   // The sprite preview dropdown is now populated from the DB, not from the local selection.
@@ -648,6 +914,7 @@ async function loadFromURL(url: string) {
   detected = [];
   selected.clear();
   spriteSplitChoices.clear();
+  clearJoinGroups();
   hideSplitMenu();
   drawOverlay();
   renderSelectedThumbs();
@@ -686,6 +953,7 @@ function runDetect(explicitBg?: RGB | null) {
   // Start with no selection; user taps to select/deselect.
   selected = new Set();
   spriteSplitChoices.clear();
+  clearJoinGroups();
   hideSplitMenu();
 
   const bgInput = $("bgColorInput") as HTMLInputElement;
