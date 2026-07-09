@@ -23,6 +23,10 @@ async function main() {
     resolve(dist, "gif.worker.js")
   );
   await copyAsset(resolve(root, "sw.js"), resolve(dist, "sw.js"));
+  await copyAsset(
+    resolve(root, "assets/fonts/Orbitron-Variable.woff2"),
+    resolve(dist, "assets/fonts/Orbitron-Variable.woff2")
+  );
   await copyAsset(resolve(root, "manifest.json"), resolve(dist, "manifest.json"));
   await copyAsset(resolve(root, "favicon.ico"), resolve(dist, "favicon.ico"));
   await copyAsset(

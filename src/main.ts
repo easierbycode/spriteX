@@ -1072,7 +1072,7 @@ function applyBuilderModeUI(mode: BuilderMode) {
     if (spritePrefixInput) spritePrefixInput.placeholder = "Sprite name prefix (e.g., enemy)";
     if (atlasNameInput) atlasNameInput.placeholder = "Atlas name (e.g., enemy_atlas)";
     if (buildBtn) buildBtn.textContent = "Build Atlas";
-    if (saveBtn) saveBtn.textContent = "Save Atlas (RTDB)";
+    if (saveBtn) saveBtn.textContent = "Save to Cloud";
     if (downloadJsonBtn) downloadJsonBtn.textContent = "Download JSON";
   }
 }
