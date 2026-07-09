@@ -498,7 +498,7 @@
       <div class="sx-topbar">
         <div class="sx-topbar-left">
           <span class="dot"></span>
-          <span>SPRITEX // <span id="sxTabTitle">SHEET</span></span>
+          <span>SPRITEX // <span id="sxTabTitle">EXTRACT</span></span>
         </div>
         <div class="sx-topbar-right">
           <button id="installBtn" class="btn">INSTALL APP</button>
@@ -517,15 +517,14 @@
       <!-- section tabs -->
       <div class="sx-tabs">
         <button class="sx-tab-step" id="sxPrevTab" title="prev section (Q)">LB</button>
-        <button class="sx-tab active" data-sx-tab="sheet">SHEET</button>
-        <button class="sx-tab" data-sx-tab="atlas">ATLAS</button>
-        <button class="sx-tab" data-sx-tab="character">CHARACTER</button>
+        <button class="sx-tab active" data-sx-tab="extract">EXTRACT</button>
+        <button class="sx-tab" data-sx-tab="view">VIEW</button>
         <button class="sx-tab-step" id="sxNextTab" title="next section (E)">RB</button>
         <span class="sx-tab-hint" id="sxTabHint">Q / E — SWITCH SECTION</span>
       </div>
 
       <!-- ══════════ SHEET ══════════ -->
-      <div class="sx-main" data-sx-panel="sheet">
+      <div class="sx-main" data-sx-panel="extract">
         <div class="sx-panel">
           <div class="sx-panel-head">
             <span>WORKSPACE</span>
@@ -565,35 +564,13 @@
           <div class="sx-dock-head">
             <span class="sx-dock-title">SELECTED</span>
             <span style="margin-left:auto;display:flex;gap:6px">
-              <button id="sheetModeSpriteBtn" class="btn sx-mode active">SPRITE</button>
-              <button id="sheetModeAtlasBtn" class="btn sx-mode">ATLAS</button>
+              <button id="sheetModeSpriteBtn" class="btn sx-mode">SPRITE</button>
+              <button id="sheetModeAtlasBtn" class="btn sx-mode active">ATLAS</button>
             </span>
           </div>
           <div class="sx-dock-body">
             <div id="selectedSpritesContainer">
               No sprites selected. After AUTO DETECT, tap sprites on the canvas to select or deselect them.
-            </div>
-            <div id="sheetSpriteMode" style="display:flex;flex-direction:column;gap:10px">
-              <div class="row" style="margin-top:6px">
-                <label for="spritePreviewSelect" class="subtitle">SPRITE</label>
-                <select id="spritePreviewSelect" style="flex:1">
-                  <option value="">-- Select --</option>
-                </select>
-              </div>
-              <div class="row">
-                <div id="spritePreviewContainer" class="preview-container bg-checkered">
-                  <img id="spritePreviewImg" class="preview-img" alt="Sprite Preview" />
-                </div>
-              </div>
-            </div>
-            <div id="sheetAtlasMode" style="display:none;flex-direction:column;gap:10px">
-              <div class="row" style="margin-top:6px">
-                <label for="atlasSelect" class="subtitle">ATLAS</label>
-                <select id="atlasSelect" style="flex:1">
-                  <option value="">-- Select an atlas --</option>
-                </select>
-              </div>
-              <button id="saveAtlasFirebaseBtn" class="btn primary" disabled>Save to Cloud</button>
             </div>
           </div>
           <div class="sx-dock-section">
@@ -611,7 +588,7 @@
               <img id="selectionPreviewImg" class="preview-img" alt="Selected Animation Preview" />
             </div>
           </div>
-          <div class="sx-dock-actions" id="sheetSpriteSave">
+          <div class="sx-dock-actions" id="sheetSpriteSave" style="display:none">
             <div class="row">
               <span class="subtitle" id="spriteSaveSubtitle">SAVE SPRITES TO FIREBASE</span>
             </div>
@@ -622,30 +599,38 @@
               <span class="meta">sprites/*</span>
             </button>
           </div>
+          <div class="sx-dock-actions" id="sheetAtlasSave">
+            <div class="row">
+              <span class="subtitle" id="builderSubtitle">ATLAS BUILDER</span>
+              <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
+                <label for="builderTypeSelect" style="font-size:12px;letter-spacing:.14em;color:var(--sx-green-dim)">MODE</label>
+                <select id="builderTypeSelect">
+                  <option value="atlas">Atlas Builder</option>
+                  <option value="font">Font Builder</option>
+                </select>
+              </span>
+            </div>
+            <input id="atlasNameInput" type="text" placeholder="ATLAS NAME (e.g. enemy_atlas)" />
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+              <button id="buildAtlasBtn" class="btn">BUILD</button>
+              <button id="openImportAtlasModalBtn" class="btn">IMPORT</button>
+              <button id="trimAtlasBtn" class="btn" style="display:none">TRIM</button>
+            </div>
+            <button id="saveAtlasFirebaseBtn" class="btn primary" disabled>Save to Cloud</button>
+          </div>
         </div>
       </div>
 
       <!-- ══════════ ATLAS ══════════ -->
-      <div class="sx-main" data-sx-panel="atlas" hidden>
+      <!-- ══════════ VIEW ══════════ -->
+      <div class="sx-main" data-sx-panel="view" hidden>
         <div class="sx-panel">
           <div class="sx-panel-head">
-            <span id="builderSubtitle">ATLAS BUILDER</span>
-            <span style="display:flex;align-items:center;gap:8px">
-              <label for="builderTypeSelect">MODE</label>
-              <select id="builderTypeSelect">
-                <option value="atlas">Atlas Builder</option>
-                <option value="font">Font Builder</option>
-              </select>
-            </span>
-            <span class="dim">SHELF PACK · FRAME KEYS PRESERVED</span>
+            <span>VIEWER</span>
+            <span class="dim">FPS <span id="frameRateSpan">-</span></span>
           </div>
-          <div class="sx-toolbar">
-            <input id="atlasNameInput" type="text" placeholder="ATLAS NAME (e.g. enemy_atlas)" style="min-width:220px" />
-            <button id="buildAtlasBtn" class="btn primary">BUILD</button>
-            <button id="openImportAtlasModalBtn" class="btn">IMPORT</button>
-            <button id="trimAtlasBtn" class="btn" style="display:none">TRIM</button>
-          </div>
-          <div style="flex:1;overflow:auto;padding:20px 24px;display:flex;flex-direction:column;gap:18px;background:var(--sx-checker)">
+          <!-- atlas view -->
+          <div id="viewAtlasMain" style="flex:1;overflow:auto;padding:20px 24px;display:flex;flex-direction:column;gap:18px;background:var(--sx-checker)">
             <div style="font-size:12px;letter-spacing:.22em;color:rgba(156,255,107,.55)">PACKED TEXTURE</div>
             <div class="row">
               <img id="atlasPreviewImg" alt="Atlas Preview" />
@@ -654,116 +639,131 @@
               <div style="font-size:12px;letter-spacing:.22em;color:rgba(156,255,107,.55)">FRAMES — ANIMATION ORDER</div>
               <button id="reorderAtlasFramesBtn" class="btn" type="button" title="Enable/disable frame reordering" aria-pressed="false">↕ REORDER</button>
             </div>
-            <div id="atlasFramesContainer">Atlas not built yet.</div>
+            <div id="atlasFramesContainer">Atlas not loaded yet.</div>
           </div>
-        </div>
-
-        <!-- atlas dock -->
-        <div class="sx-dock">
-          <div class="sx-dock-head">
-            <span class="sx-dock-title">SEQUENCE</span>
-            <span class="sx-dock-count">EXPORT</span>
-          </div>
-          <div class="sx-dock-body" style="flex:0 1 auto">
-            <div class="sx-dock-section" style="margin:0;border-top:none;padding-top:0">
-              <span>LIVE ANIM</span>
-              <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
-                <label for="atlasFpsInput" style="font-size:12px;letter-spacing:.14em;color:var(--sx-yellow)">FPS</label>
-                <input id="atlasFpsInput" type="number" value="6" min="1" max="60" style="width:60px" />
-                <button id="atlasPreviewBtn" class="btn">▶ PLAY</button>
-                <button id="atlasBgBtn" class="btn" title="Toggle background">BG</button>
-                <button id="atlasFullscreenBtn" class="btn" title="Fullscreen">⛶</button>
-              </span>
-            </div>
-            <div style="display:flex;justify-content:center;padding:12px 0">
-              <div id="atlasAnimPreviewContainer" class="preview-container bg-checkered" style="width:150px;height:150px">
-                <img id="atlasAnimPreviewImg" class="preview-img" alt="Atlas Animation Preview" />
-              </div>
-            </div>
-            <div class="row">
-              <label for="gifScaleInput" class="subtitle">GIF SCALE</label>
-              <select id="gifScaleInput" style="width:72px">
-                <option value="1">1x</option>
-                <option value="2">2x</option>
-                <option value="4">4x</option>
-              </select>
-            </div>
-          </div>
-          <div class="sx-dock-actions" style="margin-top:auto">
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-              <button id="downloadGifBtn" class="btn">GIF</button>
-              <button id="downloadAtlasJsonBtn" class="btn" disabled>JSON</button>
-              <button id="downloadAtlasPngBtn" class="btn" disabled>PNG</button>
-            </div>
-            <div class="sx-note">Atlases saved as atlases/{name} with json + png.</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ══════════ CHARACTER ══════════ -->
-      <div class="sx-main" data-sx-panel="character" hidden>
-        <div class="sx-panel">
-          <div class="sx-panel-head">
-            <span>CHARACTER PREVIEW</span>
-            <span class="dim">FPS <span id="frameRateSpan">-</span></span>
-          </div>
-          <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:20px">
+          <!-- character view -->
+          <div id="viewCharMain" style="flex:1;display:none;align-items:center;justify-content:center;padding:20px">
             <div id="characterPreviewContainer" class="preview-container bg-checkered" style="width:min(560px,90%);aspect-ratio:1/1;max-height:100%">
               <img id="characterPreviewImg" class="preview-img" alt="Character Preview" />
             </div>
           </div>
+          <!-- sprite view -->
+          <div id="viewSpriteMain" style="flex:1;display:none;align-items:center;justify-content:center;padding:20px">
+            <div id="spritePreviewContainer" class="preview-container bg-checkered">
+              <img id="spritePreviewImg" class="preview-img" alt="Sprite Preview" />
+            </div>
+          </div>
         </div>
 
-        <!-- character dock -->
+        <!-- view dock -->
         <div class="sx-dock">
           <div class="sx-dock-head">
-            <span class="sx-dock-title">ROSTER</span>
-            <span class="sx-dock-count">RTDB</span>
-          </div>
-          <div class="sx-dock-body" style="flex:0 1 auto">
-            <select id="characterSelect">
-              <option value="">-- Select a character --</option>
-            </select>
-            <button id="loadCharacterBtn" class="sx-action">
-              <span class="pad-btn pad-a">A</span>
-              <span class="label">LOAD PREVIEW</span>
-              <span class="meta">characters/*</span>
-            </button>
-          </div>
-          <div class="sx-dock-section">
-            <span>RTDB — characters/*</span>
-            <span style="margin-left:auto;display:flex;gap:8px">
-              <button id="characterBgBtn" class="btn">BG</button>
-              <button id="characterFullscreenBtn" class="btn" title="Fullscreen">⛶</button>
+            <span class="sx-dock-title">VIEW</span>
+            <span style="margin-left:auto;display:flex;gap:6px">
+              <button id="viewModeAtlasBtn" class="btn sx-mode active">ATLAS</button>
+              <button id="viewModeCharBtn" class="btn sx-mode">CHARACTER</button>
+              <button id="viewModeSpriteBtn" class="btn sx-mode">SPRITE</button>
             </span>
           </div>
-          <div class="sx-dock-actions" style="margin-top:auto">
-            <button id="downloadCharJsonBtn" class="sx-action">
-              <span class="pad-btn pad-x">X</span>
-              <span class="label">DOWNLOAD JSON</span>
-              <span class="meta">characters/*</span>
-            </button>
-            <button id="downloadCharPngBtn" class="sx-action">
-              <span class="pad-btn pad-y">Y</span>
-              <span class="label">DOWNLOAD PNG</span>
-              <span class="meta">frame strip</span>
-            </button>
+
+          <!-- atlas dock -->
+          <div id="viewAtlasDock" style="display:flex;flex-direction:column;flex:1;min-height:0">
+            <div class="sx-dock-body" style="flex:0 1 auto">
+              <select id="atlasSelect">
+                <option value="">-- Select an atlas --</option>
+              </select>
+              <button id="viewExtractBtn" class="sx-action">
+                <span class="pad-btn pad-x">X</span>
+                <span class="label">EXTRACT</span>
+                <span class="meta">→ extract tab</span>
+              </button>
+              <div class="sx-dock-section" style="margin:0;padding-top:12px">
+                <span>LIVE ANIM</span>
+                <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
+                  <label for="atlasFpsInput" style="font-size:12px;letter-spacing:.14em;color:var(--sx-yellow)">FPS</label>
+                  <input id="atlasFpsInput" type="number" value="6" min="1" max="60" style="width:60px" />
+                  <button id="atlasPreviewBtn" class="btn">▶ PLAY</button>
+                  <button id="atlasBgBtn" class="btn" title="Toggle background">BG</button>
+                  <button id="atlasFullscreenBtn" class="btn" title="Fullscreen">⛶</button>
+                </span>
+              </div>
+              <div style="display:flex;justify-content:center;padding:12px 0">
+                <div id="atlasAnimPreviewContainer" class="preview-container bg-checkered" style="width:150px;height:150px">
+                  <img id="atlasAnimPreviewImg" class="preview-img" alt="Atlas Animation Preview" />
+                </div>
+              </div>
+              <div class="row">
+                <label for="gifScaleInput" class="subtitle">GIF SCALE</label>
+                <select id="gifScaleInput" style="width:72px">
+                  <option value="1">1x</option>
+                  <option value="2">2x</option>
+                  <option value="4">4x</option>
+                </select>
+              </div>
+            </div>
+            <div class="sx-dock-actions" style="margin-top:auto">
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+                <button id="downloadGifBtn" class="btn">GIF</button>
+                <button id="downloadAtlasJsonBtn" class="btn" disabled>JSON</button>
+                <button id="downloadAtlasPngBtn" class="btn" disabled>PNG</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- character dock -->
+          <div id="viewCharDock" style="display:none;flex-direction:column;flex:1;min-height:0">
+            <div class="sx-dock-body" style="flex:0 1 auto">
+              <select id="characterSelect">
+                <option value="">-- Select a character --</option>
+              </select>
+              <button id="loadCharacterBtn" class="sx-action">
+                <span class="pad-btn pad-a">A</span>
+                <span class="label">LOAD PREVIEW</span>
+                <span class="meta">characters/*</span>
+              </button>
+            </div>
+            <div class="sx-dock-section">
+              <span>RTDB — characters/*</span>
+              <span style="margin-left:auto;display:flex;gap:8px">
+                <button id="characterBgBtn" class="btn">BG</button>
+                <button id="characterFullscreenBtn" class="btn" title="Fullscreen">⛶</button>
+              </span>
+            </div>
+            <div class="sx-dock-actions" style="margin-top:auto">
+              <button id="downloadCharJsonBtn" class="sx-action">
+                <span class="pad-btn pad-x">X</span>
+                <span class="label">DOWNLOAD JSON</span>
+                <span class="meta">characters/*</span>
+              </button>
+              <button id="downloadCharPngBtn" class="sx-action">
+                <span class="pad-btn pad-y">Y</span>
+                <span class="label">DOWNLOAD PNG</span>
+                <span class="meta">frame strip</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- sprite dock -->
+          <div id="viewSpriteDock" style="display:none;flex-direction:column;flex:1;min-height:0">
+            <div class="sx-dock-body" style="flex:0 1 auto">
+              <div class="row">
+                <label for="spritePreviewSelect" class="subtitle">SPRITE</label>
+                <select id="spritePreviewSelect" style="flex:1">
+                  <option value="">-- Select --</option>
+                </select>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
       <!-- footer -->
       <div class="sx-footer">
-        <span class="sx-footer-hints" data-sx-hints="sheet" style="display:flex;gap:30px">
+        <span class="sx-footer-hints" data-sx-hints="extract" style="display:flex;gap:30px">
           <span class="sx-hint"><span class="pad-btn pad-a">A</span><span class="sx-hint-label">SELECT</span></span>
           <span class="sx-hint"><span class="pad-btn pad-x">X</span><span class="sx-hint-label">JOIN</span></span>
         </span>
-        <span class="sx-footer-hints" data-sx-hints="atlas" style="display:none;gap:30px">
-          <span class="sx-hint"><span class="pad-btn pad-a">A</span><span class="sx-hint-label">SAVE</span></span>
-          <span class="sx-hint"><span class="pad-btn pad-x">X</span><span class="sx-hint-label">EXPORT</span></span>
-          <span class="sx-hint"><span class="sx-hint-keys">▲▼</span><span class="sx-hint-label">REORDER</span></span>
-        </span>
-        <span class="sx-footer-hints" data-sx-hints="character" style="display:none;gap:30px">
+        <span class="sx-footer-hints" data-sx-hints="view" style="display:none;gap:30px">
           <span class="sx-hint"><span class="pad-btn pad-a">A</span><span class="sx-hint-label">LOAD</span></span>
           <span class="sx-hint"><span class="pad-btn pad-b">B</span><span class="sx-hint-label">BG</span></span>
           <span class="sx-hint"><span class="pad-btn pad-x">X</span><span class="sx-hint-label">JSON</span></span>
@@ -798,24 +798,21 @@
     <script>
       // ── workbench chrome: tabs, clock, Q/E navigation ──
       (function () {
-        var TABS = ["sheet", "atlas", "character"];
-        var TITLES = { sheet: "SHEET", atlas: "ATLAS", character: "CHARACTER" };
+        var TABS = ["extract", "view"];
+        var TITLES = { extract: "EXTRACT", view: "VIEW" };
         var HEADER = {
-          sheet: "SPRITE SHEET WORKBENCH · EVIL INVADERS",
-          atlas: "ATLAS BUILDER · TEXTUREPACKER FORMAT",
-          character: "CHARACTER PREVIEW · RTDB LIVE"
+          extract: "SPRITE SHEET WORKBENCH · EVIL INVADERS",
+          view: "ATLAS · CHARACTER · SPRITE VIEWER · RTDB LIVE"
         };
         var HINTS = {
-          sheet: "BG AUTO-DETECTED ON LOAD",
-          atlas: "SHELF PACK · TRIM OFF · PADDING 0",
-          character: "SOURCE: RTDB characters/*"
+          extract: "BG AUTO-DETECTED ON LOAD",
+          view: "SOURCE: RTDB atlases/* characters/* sprites/*"
         };
         var STATUS = {
-          sheet: "SHEET · CLICK SPRITES TO SELECT",
-          atlas: "ATLAS · BUILD OR IMPORT, THEN EXPORT",
-          character: "CHARACTER · PICK FROM ROSTER"
+          extract: "EXTRACT · CLICK SPRITES TO SELECT",
+          view: "VIEW · PICK ATLAS, CHARACTER OR SPRITE"
         };
-        var current = "sheet";
+        var current = "extract";
 
         function show(tab) {
           current = tab;
@@ -851,19 +848,50 @@
           if (e.key === "e" || e.key === "E") step(1);
         });
 
-        // ── sheet dock: SPRITE / ATLAS mode toggle ──
+        // ── extract dock: SPRITE / ATLAS save-mode toggle (defaults to atlas) ──
         var spriteModeBtn = document.getElementById("sheetModeSpriteBtn");
         var atlasModeBtn = document.getElementById("sheetModeAtlasBtn");
         function setSheetMode(mode) {
           var isSprite = mode === "sprite";
-          document.getElementById("sheetSpriteMode").style.display = isSprite ? "flex" : "none";
           document.getElementById("sheetSpriteSave").style.display = isSprite ? "flex" : "none";
-          document.getElementById("sheetAtlasMode").style.display = isSprite ? "none" : "flex";
+          document.getElementById("sheetAtlasSave").style.display = isSprite ? "none" : "flex";
           spriteModeBtn.classList.toggle("active", isSprite);
           atlasModeBtn.classList.toggle("active", !isSprite);
         }
         spriteModeBtn.addEventListener("click", function () { setSheetMode("sprite"); });
         atlasModeBtn.addEventListener("click", function () { setSheetMode("atlas"); });
+
+        // ── view dock: ATLAS / CHARACTER / SPRITE switcher (defaults to atlas) ──
+        var VIEW_MODES = {
+          atlas: { btn: "viewModeAtlasBtn", main: "viewAtlasMain", dock: "viewAtlasDock" },
+          character: { btn: "viewModeCharBtn", main: "viewCharMain", dock: "viewCharDock" },
+          sprite: { btn: "viewModeSpriteBtn", main: "viewSpriteMain", dock: "viewSpriteDock" }
+        };
+        function setViewMode(mode) {
+          Object.keys(VIEW_MODES).forEach(function (m) {
+            var v = VIEW_MODES[m], on = m === mode;
+            document.getElementById(v.main).style.display = on ? "flex" : "none";
+            document.getElementById(v.dock).style.display = on ? "flex" : "none";
+            document.getElementById(v.btn).classList.toggle("active", on);
+          });
+        }
+        Object.keys(VIEW_MODES).forEach(function (m) {
+          document.getElementById(VIEW_MODES[m].btn).addEventListener("click", function () { setViewMode(m); });
+        });
+
+        // ── view > atlas: send the active atlas to the extract tab ──
+        document.getElementById("viewExtractBtn").addEventListener("click", function () {
+          var src = document.getElementById("atlasPreviewImg").src || "";
+          if (!src.startsWith("data:")) {
+            document.getElementById("sxStatusLine").textContent = "SELECT AN ATLAS FIRST";
+            return;
+          }
+          var urlInput = document.getElementById("fileUrl");
+          urlInput.value = src;
+          document.getElementById("btnAddUrl").click();
+          urlInput.value = "";
+          show("extract");
+        });
 
         function tick() {
           document.getElementById("sxClock").textContent = new Date().toTimeString().slice(0, 8);
