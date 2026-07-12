@@ -702,11 +702,13 @@
               </div>
             </div>
             <div class="sx-dock-actions" style="margin-top:auto">
-              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
                 <button id="downloadGifBtn" class="btn">GIF</button>
                 <button id="downloadAtlasJsonBtn" class="btn" disabled>JSON</button>
                 <button id="downloadAtlasPngBtn" class="btn" disabled>PNG</button>
+                <button id="downloadAtlasTmxBtn" class="btn" disabled title="Export Tiled tile map (.tmx)">🗺 TMX</button>
               </div>
+              <button id="downloadAtlasAllBtn" class="btn primary" disabled title="Download atlas PNG + JSON + TMX">⬇ ALL — PNG + JSON + TMX</button>
             </div>
           </div>
 
@@ -776,7 +778,7 @@
     <div id="importAtlasModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="importAtlasTitle">
       <div class="modal-content">
         <div class="row" style="justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <strong id="importAtlasTitle">IMPORT ATLAS</strong>
+          <strong id="importAtlasTitle">IMPORT ATLAS / TILED MAP</strong>
           <button id="closeImportAtlasModalBtn" class="btn" type="button">CLOSE</button>
         </div>
         <div class="row">
@@ -784,7 +786,7 @@
           <input id="importAtlasPngInput" type="file" accept=".png,image/png" />
         </div>
         <div id="atlasImportDropzone" class="dropzone">
-          Drag &amp; drop atlas JSON + PNG files here
+          Drag &amp; drop JSON + PNG files here (atlas, or Tiled map + tileset)
         </div>
         <div id="atlasImportStatus" style="margin-top: 8px; font-size: 12px; letter-spacing: .1em; color: var(--sx-green-dim);">
           Select both files to import.
