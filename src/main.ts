@@ -6,6 +6,8 @@ import {
   saveSpritesBatchToRTDB,
   buildAtlas,
   saveAtlas,
+  saveMap,
+  sanitizeMapKey,
   loadCharacterPreviewFromAtlas,
   fetchAllCharacters,
   fetchAllAtlases,
@@ -1124,6 +1126,8 @@ async function buildAtlasAndPreview() {
   $("saveAtlasFirebaseBtn")!.removeAttribute("disabled");
   $("downloadAtlasJsonBtn")!.removeAttribute("disabled");
   $("downloadAtlasPngBtn")!.removeAttribute("disabled");
+  $("downloadAtlasTmxBtn")?.removeAttribute("disabled");
+  $("downloadAtlasAllBtn")?.removeAttribute("disabled");
 
   // --- New logic for atlas frame preview ---
   stopAtlasPreview();
@@ -1640,6 +1644,8 @@ async function applyAtlasPreview(
   $("saveAtlasFirebaseBtn")!.removeAttribute("disabled");
   $("downloadAtlasJsonBtn")!.removeAttribute("disabled");
   $("downloadAtlasPngBtn")!.removeAttribute("disabled");
+  $("downloadAtlasTmxBtn")?.removeAttribute("disabled");
+  $("downloadAtlasAllBtn")?.removeAttribute("disabled");
 
   stopAtlasPreview();
   atlasSelectedFrameIndices.clear();
@@ -1744,10 +1750,17 @@ async function importAtlasFromSelectedFiles() {
     ]);
     const json = JSON.parse(jsonText);
 
+    // Tiled tilemap JSON (layers/tilesets, no frames object) — import it as
+    // a map record next to the atlases instead of rejecting it
+    if (isTiledMapJson(json)) {
+      await importTilemapFromSelectedFiles(json, dataURL);
+      return;
+    }
+
     const hasFrames = json?.frames && typeof json.frames === "object";
     const hasTextures = Array.isArray(json?.textures) && json.textures[0]?.frames && typeof json.textures[0].frames === "object";
     if (!hasFrames && !hasTextures) {
-      alert("Invalid atlas JSON. Missing frames object.");
+      alert("Invalid atlas JSON. Missing frames object (and not a Tiled map).");
       return;
     }
 
@@ -1762,6 +1775,52 @@ async function importAtlasFromSelectedFiles() {
     console.error(err);
     alert(`Failed to import atlas: ${err?.message || "Unknown error"}`);
   }
+}
+
+function isTiledMapJson(json: any): boolean {
+  return (
+    json?.type === "map" ||
+    (Array.isArray(json?.layers) && Array.isArray(json?.tilesets))
+  );
+}
+
+/**
+ * Import a Tiled map + tileset PNG picked in the atlas-import modal.
+ * Stored at maps/<key> = { json, png } in the RTDB, alongside the atlases —
+ * mario-sp (and friends) load these at runtime and the in-game level editor
+ * writes its saves to the same records.
+ */
+async function importTilemapFromSelectedFiles(json: any, dataURL: string) {
+  // only embedded-tileset, uncompressed maps are playable by the games
+  if ((json.tilesets || []).some((t: any) => t.source)) {
+    alert(
+      "This Tiled map references an external tileset (.tsx). " +
+        "In Tiled use Map > Embed Tilesets, re-export, and import again."
+    );
+    return;
+  }
+  if ((json.layers || []).some((l: any) => l.compression)) {
+    alert(
+      "This map uses compressed tile layers. Re-export with " +
+        "Tile Layer Format = CSV or Base64 (uncompressed)."
+    );
+    return;
+  }
+
+  const suggested = sanitizeMapKey(
+    importAtlasJsonFile!.name.replace(/\.json$/i, "")
+  );
+  const entered = window.prompt("Import Tiled map to RTDB as maps/<name>:", suggested);
+  if (entered === null) return; // cancelled
+  const key = sanitizeMapKey(entered.trim() || suggested);
+
+  const layerCount = Array.isArray(json.layers) ? json.layers.length : 0;
+  await saveMap(key, { json, png: dataURL });
+  alert(
+    `Tiled map "${key}" saved to RTDB (maps/${key}) — ` +
+      `${json.width}x${json.height} tiles, ${layerCount} layer(s).`
+  );
+  closeImportAtlasModal(true);
 }
 
 async function loadCharacterAndPreview() {
@@ -2027,6 +2086,140 @@ async function downloadAtlasPng() {
   triggerDownload(dataURL, filename, "image/png");
 }
 
+function getAtlasFrameRects(json: any): { x: number; y: number; w: number; h: number }[] {
+  const frameData = json?.frames || json?.textures?.[0]?.frames || {};
+  const rects: { x: number; y: number; w: number; h: number }[] = [];
+  for (const key in frameData) {
+    const frame = frameData[key]?.frame;
+    if (!frame || typeof frame.w !== "number" || typeof frame.h !== "number") {
+      continue;
+    }
+    rects.push({ x: frame.x || 0, y: frame.y || 0, w: frame.w, h: frame.h });
+  }
+  return rects;
+}
+
+/**
+ * Builds a Tiled .tmx map from the loaded atlas, mirroring exportTiledFormat()
+ * from easierbycode.github.io/tileset-extractor: the atlas PNG is the tileset
+ * image and a single layer lays the tiles out in grid order (gid 0 = cells not
+ * covered by any frame). Requires a uniform, grid-aligned tile atlas.
+ */
+function buildAtlasTmx(json: any, atlasName: string, imageW: number, imageH: number): string {
+  const rects = getAtlasFrameRects(json);
+  if (!rects.length) throw new Error("Atlas JSON has no frames.");
+
+  const tileWidth = rects[0].w;
+  const tileHeight = rects[0].h;
+  if (rects.some((r) => r.w !== tileWidth || r.h !== tileHeight)) {
+    throw new Error("Atlas frames are not a uniform size — a tile map needs one tile size.");
+  }
+  if (!imageW || !imageH) throw new Error("Unknown atlas image size.");
+
+  const numCols = imageW / tileWidth;
+  const numRows = imageH / tileHeight;
+  if (numCols !== Math.floor(numCols) || !numCols) {
+    throw new Error(`Image width (${imageW}px) is not dividable by tile width (${tileWidth}px).`);
+  }
+  if (numRows !== Math.floor(numRows) || !numRows) {
+    throw new Error(`Image height (${imageH}px) is not dividable by tile height (${tileHeight}px).`);
+  }
+
+  const coveredCells = new Set<number>();
+  for (const r of rects) {
+    if (r.x % tileWidth !== 0 || r.y % tileHeight !== 0) {
+      throw new Error("Atlas frames are not aligned to the tile grid.");
+    }
+    coveredCells.add((r.y / tileHeight) * numCols + r.x / tileWidth);
+  }
+
+  const doc = document.implementation.createDocument(null, "map", null);
+  const xmlMap = doc.documentElement;
+  xmlMap.setAttribute("version", "1.0");
+  xmlMap.setAttribute("orientation", "orthogonal");
+  xmlMap.setAttribute("renderorder", "right-down");
+  xmlMap.setAttribute("width", String(numCols));
+  xmlMap.setAttribute("height", String(numRows));
+  xmlMap.setAttribute("tilewidth", String(tileWidth));
+  xmlMap.setAttribute("tileheight", String(tileHeight));
+  xmlMap.setAttribute("nextobjectid", "1");
+
+  const xmlTileSet = doc.createElement("tileset");
+  xmlTileSet.setAttribute("firstgid", "1");
+  xmlTileSet.setAttribute("name", atlasName);
+  xmlTileSet.setAttribute("tilewidth", String(tileWidth));
+  xmlTileSet.setAttribute("tileheight", String(tileHeight));
+  const xmlImage = doc.createElement("image");
+  xmlImage.setAttribute("source", `${atlasName}.png`);
+  xmlImage.setAttribute("width", String(imageW));
+  xmlImage.setAttribute("height", String(imageH));
+  xmlTileSet.appendChild(xmlImage);
+  xmlMap.appendChild(xmlTileSet);
+
+  const xmlLayer = doc.createElement("layer");
+  xmlLayer.setAttribute("name", "layer");
+  xmlLayer.setAttribute("width", String(numCols));
+  xmlLayer.setAttribute("height", String(numRows));
+  const xmlData = doc.createElement("data");
+  for (let i = 0, n = numCols * numRows; i < n; ++i) {
+    const xmlTile = doc.createElement("tile");
+    xmlTile.setAttribute("gid", String(coveredCells.has(i) ? i + 1 : 0));
+    xmlData.appendChild(xmlTile);
+  }
+  xmlLayer.appendChild(xmlData);
+  xmlMap.appendChild(xmlLayer);
+
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(xmlMap);
+}
+
+async function downloadAtlasTmx() {
+  if (atlasSyncPromise) {
+    await atlasSyncPromise;
+  }
+  if (atlasOrderDirty) {
+    await scheduleAtlasOrderSync();
+  }
+
+  const img = $("atlasPreviewImg") as HTMLImageElement;
+  const json = (img as any)._atlasJson;
+
+  if (!json) {
+    alert("Build or load an atlas first.");
+    return;
+  }
+
+  const nameInput = $("atlasNameInput") as HTMLInputElement;
+  const select = $("atlasSelect") as HTMLSelectElement;
+  const atlasName = (nameInput?.value.trim()) || (select?.value) || "atlas";
+
+  // Prefer the real PNG dimensions — meta.size can be stale (e.g. untrimmed 2048)
+  // and the .tmx must describe the PNG file that gets downloaded alongside it.
+  const imageW = img.naturalWidth || json?.meta?.size?.w || json?.textures?.[0]?.size?.w;
+  const imageH = img.naturalHeight || json?.meta?.size?.h || json?.textures?.[0]?.size?.h;
+
+  try {
+    const tmx = buildAtlasTmx(json, atlasName, imageW, imageH);
+    downloadFile(`${atlasName}.tmx`, tmx, "text/xml");
+  } catch (err: any) {
+    alert(`TMX export failed: ${err?.message || err}`);
+  }
+}
+
+async function downloadAtlasAll() {
+  const img = $("atlasPreviewImg") as HTMLImageElement;
+  if (!(img as any)._atlasDataURL || !(img as any)._atlasJson) {
+    alert("Build or load an atlas first.");
+    return;
+  }
+
+  // Space the downloads out so the browser doesn't swallow successive ones.
+  await downloadAtlasPng();
+  await new Promise((r) => setTimeout(r, 300));
+  await downloadAtlasJson();
+  await new Promise((r) => setTimeout(r, 300));
+  await downloadAtlasTmx();
+}
+
 async function trimCurrentAtlas() {
     const img = $("atlasPreviewImg") as HTMLImageElement;
     const json = (img as any)._atlasJson;
@@ -2225,6 +2418,16 @@ function wireUI() {
   ($("downloadAtlasPngBtn") as HTMLButtonElement).addEventListener(
     "click",
     downloadAtlasPng
+  );
+
+  ($("downloadAtlasTmxBtn") as HTMLButtonElement | null)?.addEventListener(
+    "click",
+    downloadAtlasTmx
+  );
+
+  ($("downloadAtlasAllBtn") as HTMLButtonElement | null)?.addEventListener(
+    "click",
+    downloadAtlasAll
   );
 
   ($("atlasSelect") as HTMLSelectElement).addEventListener(
@@ -2493,6 +2696,96 @@ function setupPWA() {
   });
 }
 
+// ============ CMG Sprite Picker preload bridge ==========
+// The CMG launcher (github.com/easierbycode/cmg, tools/sprite-picker-extension)
+// can boot SpriteX with sprites picked from any sprite-sheet site. The payload
+// arrives as a window message from the embedding launcher frame (or an opener):
+//   { type: "spritex-preload", sprites: [{ name, dataURL }, ...] }
+// The sprites are packed with the existing atlas builder and shown in the View
+// tab exactly as if an RTDB atlas had been selected, and the sender is answered
+// with { type: "spritex-preload-ack", count } so it can stop re-posting.
+
+const PRELOAD_MAX_SPRITES = 64;
+
+function sanitizePreloadSprites(
+  raw: unknown
+): { name: string; dataURL: string }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { name: string; dataURL: string }[] = [];
+  const seen = new Set<string>();
+  for (const s of raw.slice(0, PRELOAD_MAX_SPRITES)) {
+    const dataURL = typeof (s as any)?.dataURL === "string"
+      ? (s as any).dataURL
+      : "";
+    if (!/^data:image\/(png|webp|gif|jpe?g);base64,/.test(dataURL)) continue;
+    let name = typeof (s as any)?.name === "string" ? (s as any).name : "";
+    name = name.replace(/[^\w-]/g, "").slice(0, 48) || `sprite_${out.length}`;
+    while (seen.has(name)) name += "_";
+    seen.add(name);
+    out.push({ name, dataURL });
+  }
+  return out;
+}
+
+async function preloadSpritesIntoView(
+  sprites: { name: string; dataURL: string }[]
+) {
+  const named: Record<string, string> = {};
+  sprites.forEach((s, i) => {
+    named[s.name || `sprite_${i}`] = s.dataURL;
+  });
+  const { dataURL, json } = await buildAtlas(named);
+  await applyAtlasPreview(dataURL, json, {
+    selectAllFrames: true,
+    startPreviewNow: true,
+  });
+  // Tab switching lives in an inline IIFE in index.html (show() is closure
+  // private), so drive it through the buttons like a user would.
+  (document.querySelector(
+    '.sx-tab[data-sx-tab="view"]'
+  ) as HTMLButtonElement | null)?.click();
+  (document.getElementById("viewModeAtlasBtn") as HTMLButtonElement | null)
+    ?.click();
+  const status = document.getElementById("sxStatusLine");
+  if (status) {
+    status.textContent = `VIEW · ${sprites.length} SPRITE${
+      sprites.length === 1 ? "" : "S"
+    } FROM SPRITE PICKER`;
+  }
+}
+
+let preloadBusy = false;
+
+function setupPreloadBridge() {
+  window.addEventListener("message", (ev: MessageEvent) => {
+    const d = ev.data;
+    if (!d || d.type !== "spritex-preload") return;
+    const sprites = sanitizePreloadSprites(d.sprites);
+    if (!sprites.length || preloadBusy) return;
+    preloadBusy = true;
+    const src = ev.source as Window | null;
+    preloadSpritesIntoView(sprites)
+      .then(() => {
+        try {
+          src?.postMessage(
+            { type: "spritex-preload-ack", count: sprites.length },
+            "*"
+          );
+        } catch (_e) { /* sender gone — nothing to ack */ }
+      })
+      .catch((err) => console.error("spritex-preload failed:", err))
+      .finally(() => {
+        preloadBusy = false;
+      });
+  });
+  // Tell an embedding launcher we can receive sprites now.
+  const host = window.opener ||
+    (window.parent !== window ? window.parent : null);
+  try {
+    host?.postMessage({ type: "spritex-ready" }, "*");
+  } catch (_e) { /* not embedded */ }
+}
+
 async function populateSpritePreviewDropdownFromDB() {
     const select = $("spritePreviewSelect") as HTMLSelectElement;
     if (!select) return;
@@ -2537,6 +2830,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupTheme();
   wireUI();
   setupPWA();
+  // Before the RTDB awaits: preload must work even when Firebase is slow/down.
+  setupPreloadBridge();
   await populateCharacterSelect();
   await populateAtlasSelect();
   await populateSpritePreviewDropdownFromDB();

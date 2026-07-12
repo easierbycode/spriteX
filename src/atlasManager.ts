@@ -173,6 +173,39 @@ export async function saveAtlas(
   }
 }
 
+export interface TiledMapData {
+  json: any;
+  png: string; // tileset PNG DataURL with prefix
+}
+
+/** RTDB keys cannot contain . # $ / [ ] */
+export function sanitizeMapKey(key: string): string {
+  return key.replace(/[.#$/\[\]]/g, "-");
+}
+
+/**
+ * Tiled maps live alongside the atlases with the same record shape:
+ *   maps/<key> = { json, png }
+ * The map JSON is stored stringified — its tile-layer data arrays are huge
+ * (thousands of GIDs) and would explode into per-index RTDB children as an
+ * object tree.
+ */
+export async function saveMap(
+  mapKey: string,
+  data: TiledMapData
+): Promise<void> {
+  const db = getDB();
+  try {
+    await set(ref(db, `maps/${sanitizeMapKey(mapKey)}`), {
+      json: typeof data.json === "string" ? data.json : JSON.stringify(data.json),
+      png: data.png,
+    });
+  } catch (error) {
+    console.error(`Error saving map ${mapKey}:`, error);
+    throw error;
+  }
+}
+
 /** =========================== Utils ============================ */
 
 function clamp(n: number, lo: number, hi: number): number {
