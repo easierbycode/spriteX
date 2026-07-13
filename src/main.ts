@@ -45,6 +45,7 @@ let selectionPlaying = false;
 let atlasAnimTimer: number | null = null;
 let atlasFrames: string[] = []; // All frames extracted from atlas
 let atlasFrameNames: string[] = []; // Frame keys from atlas JSON
+let atlasFrameRects: DetectedSprite[] = []; // Frame rects (atlas px), parallel to atlasFrames
 let atlasSelectedFrameIndices = new Set<number>();
 let atlasAnimFrameIndex = 0;
 let atlasAnimPlaying = false;
@@ -897,7 +898,7 @@ function extractSingleSpriteDataURL(index: number): string | null {
     return c.toDataURL("image/png");
 }
 
-async function loadFromURL(url: string) {
+async function loadFromURL(url: string, opts?: { autoDetect?: boolean }) {
   const img = new Image();
   img.crossOrigin = "Anonymous";
 
@@ -916,9 +917,6 @@ async function loadFromURL(url: string) {
   spriteSplitChoices.clear();
   clearJoinGroups();
   hideSplitMenu();
-  drawOverlay();
-  renderSelectedThumbs();
-  onSelectionChanged();
 
   // Reset BG controls to default state when a new image is loaded.
   const bgInput = $("bgColorInput") as HTMLInputElement;
@@ -927,6 +925,51 @@ async function loadFromURL(url: string) {
   bgInput.disabled = false;
   bgPickBtn.disabled = false;
   bgStatus.style.display = "none";
+
+  if (opts?.autoDetect === false) {
+    drawOverlay();
+    renderSelectedThumbs();
+    onSelectionChanged();
+    return;
+  }
+
+  // Task 4: automatically detect background color + sprites on open, using the
+  // same smartDetectSprites approach as the sprite-picker-extension.
+  runDetect();
+}
+
+/**
+ * Load an atlas texture into the Extract workspace and seed the detected
+ * sprites directly from the atlas frame rects, so the frames are ready to
+ * use without re-running detection.
+ */
+async function sendAtlasFramesToExtract(
+  dataURL: string,
+  rects: DetectedSprite[]
+) {
+  await loadFromURL(dataURL, { autoDetect: false });
+
+  detected = rects.map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h }));
+  selected = new Set(detected.map((_, i) => i));
+  detectedBg = null;
+  detectedTolerance = 0; // frames carry their own transparency; no keying
+  spriteSplitChoices.clear();
+  clearJoinGroups();
+  hideSplitMenu();
+
+  // Atlas frames are pre-cut with transparency — mirror the transparent-image
+  // detection state (BG keying disabled).
+  const bgInput = $("bgColorInput") as HTMLInputElement;
+  const bgPickBtn = $("bgColorPickBtn") as HTMLButtonElement;
+  const bgStatus = $("bgStatus") as HTMLSpanElement;
+  bgInput.value = "#cccccc";
+  bgInput.disabled = true;
+  bgPickBtn.disabled = true;
+  bgStatus.style.display = "inline";
+
+  drawOverlay();
+  renderSelectedThumbs();
+  onSelectionChanged();
 }
 
 async function loadFromFile(file: File) {
@@ -982,9 +1025,10 @@ function runDetect(explicitBg?: RGB | null) {
 async function extractFramesFromAtlas(
   atlasImg: HTMLImageElement,
   atlasJson: any
-): Promise<{ frames: string[]; names: string[] }> {
+): Promise<{ frames: string[]; names: string[]; rects: DetectedSprite[] }> {
   const frames: string[] = [];
   const names: string[] = [];
+  const rects: DetectedSprite[] = [];
   const frameData = atlasJson.frames || atlasJson.textures?.[0]?.frames || {};
 
   for (const key in frameData) {
@@ -1000,9 +1044,10 @@ async function extractFramesFromAtlas(
     ctx.drawImage(atlasImg, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
     frames.push(c.toDataURL("image/png"));
     names.push(frameData[key]?.filename || key);
+    rects.push({ x: frame.x, y: frame.y, w: frame.w, h: frame.h });
   }
 
-  return { frames, names };
+  return { frames, names, rects };
 }
 
 async function saveSelectedSpritesToFirebase() {
@@ -1135,6 +1180,7 @@ async function buildAtlasAndPreview() {
       const result = await extractFramesFromAtlas(atlasImg, json);
       atlasFrames = result.frames;
       atlasFrameNames = result.names;
+      atlasFrameRects = result.rects;
       atlasOrderDirty = false;
       renderAtlasFrames();
       resolve();
@@ -1241,6 +1287,7 @@ function renderAtlasFrames() {
 
   if (!atlasFrames.length) {
     cont.textContent = "No frames found in atlas.";
+    updateSelectAllFramesBtn();
     return;
   }
 
@@ -1280,6 +1327,7 @@ function renderAtlasFrames() {
         wrapper.classList.add("selected");
       }
       refreshAtlasPreviewFrames(false);
+      updateSelectAllFramesBtn();
     });
 
     if (atlasReorderEnabled) {
@@ -1310,6 +1358,8 @@ function renderAtlasFrames() {
         atlasFrames.splice(to, 0, moved);
         const movedName = atlasFrameNames.splice(from, 1)[0];
         atlasFrameNames.splice(to, 0, movedName);
+        const movedRect = atlasFrameRects.splice(from, 1)[0];
+        atlasFrameRects.splice(to, 0, movedRect);
         atlasSelectedFrameIndices = remapSelectedFrameIndicesAfterMove(
           atlasSelectedFrameIndices,
           atlasFrames.length,
@@ -1325,6 +1375,30 @@ function renderAtlasFrames() {
 
     cont.appendChild(wrapper);
   });
+
+  updateSelectAllFramesBtn();
+}
+
+function updateSelectAllFramesBtn() {
+  const btn = $("selectAllFramesBtn") as HTMLButtonElement | null;
+  if (!btn) return;
+  const total = atlasFrames.length;
+  btn.disabled = total === 0;
+  const allSelected = total > 0 && atlasSelectedFrameIndices.size === total;
+  btn.textContent = allSelected ? "SELECT NONE" : "SELECT ALL";
+  btn.setAttribute("aria-pressed", String(allSelected));
+}
+
+function toggleSelectAllFrames() {
+  if (!atlasFrames.length) return;
+  const allSelected = atlasSelectedFrameIndices.size === atlasFrames.length;
+  if (allSelected) {
+    atlasSelectedFrameIndices.clear();
+  } else {
+    atlasSelectedFrameIndices = new Set(atlasFrames.map((_, i) => i));
+  }
+  renderAtlasFrames();
+  refreshAtlasPreviewFrames(false);
 }
 
 async function saveAtlasToFirebase() {
@@ -1650,6 +1724,7 @@ async function applyAtlasPreview(
       const result = await extractFramesFromAtlas(atlasImg, json);
       atlasFrames = result.frames;
       atlasFrameNames = result.names;
+      atlasFrameRects = result.rects;
       atlasOrderDirty = false;
       if (options?.selectAllFrames) {
         atlasSelectedFrameIndices = new Set(atlasFrames.map((_, i) => i));
@@ -1756,8 +1831,17 @@ async function importAtlasFromSelectedFiles() {
       atlasNameInput.value = importAtlasJsonFile.name.replace(/\.json$/i, "");
     }
 
-    await applyAtlasPreview(dataURL, json, { selectAllFrames: true, startPreviewNow: true });
+    await applyAtlasPreview(dataURL, json, { selectAllFrames: true, startPreviewNow: false });
     closeImportAtlasModal(true);
+
+    // Task 2: IMPORT lives in the Extract tab — surface the imported frames
+    // right there as ready-to-use selected sprites (no switch to View needed).
+    const rects = atlasFrameRects.filter(Boolean);
+    if (rects.length) {
+      const previewImg = $("atlasPreviewImg") as HTMLImageElement;
+      const atlasURL = (previewImg as any)._atlasDataURL || dataURL;
+      await sendAtlasFramesToExtract(atlasURL, rects);
+    }
   } catch (err: any) {
     console.error(err);
     alert(`Failed to import atlas: ${err?.message || "Unknown error"}`);
@@ -2079,6 +2163,17 @@ async function trimCurrentAtlas() {
     alert(`Atlas trimmed from ${originalWidth}px to ${actualWidth}px wide. You can now save the trimmed version.`);
 }
 
+function setStatusLine(msg: string) {
+  const el = $("sxStatusLine");
+  if (el) el.textContent = msg;
+}
+
+function switchToExtractTab() {
+  (
+    document.querySelector('.sx-tab[data-sx-tab="extract"]') as HTMLButtonElement | null
+  )?.click();
+}
+
 function wireUI() {
   ($("btnAddUrl") as HTMLButtonElement).addEventListener("click", async () => {
     const val = ($("fileUrl") as HTMLInputElement).value.trim();
@@ -2236,6 +2331,33 @@ function wireUI() {
   if (reorderBtn) {
     reorderBtn.addEventListener("click", toggleAtlasReorder);
   }
+
+  // Task 1: select all / none toggle for atlas frames in the View tab.
+  $("selectAllFramesBtn")?.addEventListener("click", toggleSelectAllFrames);
+
+  // Task 3: send the frames selected in View straight to the Extract tab as
+  // detected sprites, skipping re-detection.
+  $("viewExtractBtn")?.addEventListener("click", async () => {
+    const previewImg = $("atlasPreviewImg") as HTMLImageElement;
+    const dataURL = (previewImg as any)._atlasDataURL || previewImg.src || "";
+    if (!dataURL.startsWith("data:")) {
+      setStatusLine("SELECT AN ATLAS FIRST");
+      return;
+    }
+
+    const indices = atlasSelectedFrameIndices.size
+      ? [...atlasSelectedFrameIndices].sort((a, b) => a - b)
+      : atlasFrames.map((_, i) => i);
+    const rects = indices.map((i) => atlasFrameRects[i]).filter(Boolean);
+
+    if (rects.length) {
+      await sendAtlasFramesToExtract(dataURL, rects);
+    } else {
+      // No frame metadata available — fall back to loading + auto-detecting.
+      await loadFromURL(dataURL);
+    }
+    switchToExtractTab();
+  });
 
   // Selection preview controls
   const selBtn = $("selectionPreviewBtn") as HTMLButtonElement | null;

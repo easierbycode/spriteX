@@ -637,6 +637,7 @@
             </div>
             <div class="row" style="align-items:center;gap:12px">
               <div style="font-size:12px;letter-spacing:.22em;color:rgba(156,255,107,.55)">FRAMES — ANIMATION ORDER</div>
+              <button id="selectAllFramesBtn" class="btn" type="button" title="Select all / none frames" aria-pressed="false">SELECT ALL</button>
               <button id="reorderAtlasFramesBtn" class="btn" type="button" title="Enable/disable frame reordering" aria-pressed="false">↕ REORDER</button>
             </div>
             <div id="atlasFramesContainer">Atlas not loaded yet.</div>
@@ -879,19 +880,8 @@
           document.getElementById(VIEW_MODES[m].btn).addEventListener("click", function () { setViewMode(m); });
         });
 
-        // ── view > atlas: send the active atlas to the extract tab ──
-        document.getElementById("viewExtractBtn").addEventListener("click", function () {
-          var src = document.getElementById("atlasPreviewImg").src || "";
-          if (!src.startsWith("data:")) {
-            document.getElementById("sxStatusLine").textContent = "SELECT AN ATLAS FIRST";
-            return;
-          }
-          var urlInput = document.getElementById("fileUrl");
-          urlInput.value = src;
-          document.getElementById("btnAddUrl").click();
-          urlInput.value = "";
-          show("extract");
-        });
+        // View > atlas → extract handoff lives in main.ts (sendAtlasFramesToExtract),
+        // so selected frames become detected sprites without re-detection.
 
         function tick() {
           document.getElementById("sxClock").textContent = new Date().toTimeString().slice(0, 8);
