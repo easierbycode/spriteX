@@ -283,6 +283,20 @@ function encodeAtlasFrameKey(name: string): string {
     .join("")}`;
 }
 
+/** Decode a `k_`-prefixed hex frame key back to its original name. */
+export function decodeAtlasFrameKey(key: string): string {
+  if (typeof key !== "string" || !key.startsWith("k_")) return key;
+  const hex = key.slice(2);
+  if (hex.length === 0 || hex.length % 4 !== 0 || !/^[0-9a-fA-F]+$/.test(hex)) {
+    return key;
+  }
+  let out = "";
+  for (let i = 0; i < hex.length; i += 4) {
+    out += String.fromCodePoint(parseInt(hex.slice(i, i + 4), 16));
+  }
+  return out;
+}
+
 const RTDB_INVALID_KEY_CHARS = /[.#$\/\[\]]/;
 
 function makeRTDBSafeKey(key: string): string {
