@@ -21,7 +21,7 @@ import {
   type SpriteData,
 } from "./atlasManager";
 import { initPackerTab, setPackerAtlasNames } from "./packerTab";
-import { initTilemapEditor } from "./tilemapEditor";
+import { initTilemapEditor, initTilemapGameBridge } from "./tilemapEditor";
 import { initGamepad } from "./gamepad";
 
 let originalCanvas: HTMLCanvasElement;
@@ -2658,6 +2658,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initPackerTab();
   setupPWA();
   initTilemapEditor({ downloadFile, setStatus: setStatusLine });
+  initTilemapGameBridge();
   initGamepad({ setStatus: setStatusLine });
   await populateCharacterSelect();
   await populateAtlasSelect();

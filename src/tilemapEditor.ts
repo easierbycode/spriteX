@@ -435,6 +435,9 @@ async function initFromPending() {
   undoStack.length = 0;
   inspectedObject = null;
   mapDirty = false;
+  // Any load through this path detaches the editor from the game session's
+  // current map; loadSessionMap() re-attaches right after a session load.
+  editorSessionKey = null;
 
   // Consume the pending pieces so a later upload starts a fresh set — a stale
   // tileset JSON from the previous map must not contaminate the next one.
@@ -1429,6 +1432,327 @@ async function loadTilemapFromCloud(key: string) {
   }
 }
 
+/** ============= Game session (CMG launcher bridge) ============== */
+// When SpriteX runs inside the CMG launcher's iframe, the launcher posts a
+// game's whole map family in and we edit them as a set:
+//   parent → { type: 'spritex-tilemap-preload', gameId, primary, maps }
+//   us     → { type: 'spritex-tilemap-preload-ack' }        (stops re-posts)
+//   us     → { type: 'cmg-tilemap-save', gameId, files }    (on save)
+//   parent → { type: 'cmg-tilemap-save-ack', ok, saved, error }
+// Trust model: messages are only honored when embedded and coming from the
+// embedding parent window itself.
+
+type GameSessionEntry = {
+  path: string | null; // launcher-relative file path (null = RTDB-only map)
+  json: any; // last-known Tiled map JSON (object form)
+  png: string | null; // embedded tileset image as a data: URL
+  text: string; // current serialized Tiled JSON (synced on switch-away/save)
+  originalText: string; // serialized text at last save — dirty baseline
+  dirty: boolean;
+};
+
+type GameSession = {
+  gameId: string;
+  primary: string;
+  currentKey: string;
+  maps: Map<string, GameSessionEntry>;
+};
+
+let gameSession: GameSession | null = null;
+// Which session map the editor canvas currently holds (null when the editor
+// holds a non-session map, e.g. a user-dropped file during a session).
+let editorSessionKey: string | null = null;
+let familySelect: HTMLSelectElement | null = null;
+
+function isEmbedded(): boolean {
+  return window.parent !== window;
+}
+
+function postToLauncher(msg: any): boolean {
+  if (!isEmbedded()) return false;
+  window.parent.postMessage(msg, "*");
+  return true;
+}
+
+/** Serialize the editor's current map back into its session entry. */
+function syncEditorIntoSession() {
+  if (!gameSession || !map || !editorSessionKey) return;
+  const entry = gameSession.maps.get(editorSessionKey);
+  if (!entry) return;
+  entry.text = serializeMap();
+  entry.json = map;
+  entry.dirty = entry.text !== entry.originalText;
+}
+
+/** Load one session map into the editor via the pending-slot path. */
+async function loadSessionMap(key: string): Promise<boolean> {
+  if (!gameSession) return false;
+  const entry = gameSession.maps.get(key);
+  if (!entry) return false;
+  if (!entry.png) {
+    setStatus(`MAP "${key.toUpperCase()}" HAS NO TILESET PNG`);
+    return false;
+  }
+  try {
+    // Parse a fresh copy so editor mutations never alias the stored JSON.
+    pendingMapJson = JSON.parse(entry.text) as TiledMap;
+  } catch {
+    setStatus(`MAP "${key.toUpperCase()}" HAS INVALID JSON`);
+    return false;
+  }
+  pendingMapName = key;
+  pendingTilesetJson = null; // game maps embed their tileset in the map JSON
+  pendingPngDataURL = entry.png;
+  pendingPngName = `${key} tileset`;
+  try {
+    await initFromPending();
+  } catch {
+    // initFromPending already alerted (e.g. tileset image failed to load)
+  }
+  if (pendingMapJson !== null) {
+    // initFromPending bailed (infinite map / compressed data) without
+    // consuming the pending slots — clear them so a later user upload
+    // starts from a clean set.
+    pendingMapJson = null;
+    pendingMapName = "";
+    pendingTilesetJson = null;
+    pendingPngDataURL = "";
+    pendingPngName = "";
+    refreshFileStatus();
+    return false;
+  }
+  // Re-baseline against the editor's canonical serialization so dirty
+  // checks compare like with like (initFromPending decodes base64 layer
+  // data in place and serializeMap uses its own indentation).
+  const normalized = serializeMap();
+  if (!entry.dirty) entry.originalText = normalized;
+  entry.text = normalized;
+  entry.json = map;
+  gameSession.currentKey = key;
+  editorSessionKey = key;
+  updateFamilySelect();
+  refreshFileStatus();
+  return true;
+}
+
+/** ----- Family map switcher (only visible when a session has >1 maps) ---- */
+
+function ensureFamilySelect(): HTMLSelectElement | null {
+  if (familySelect) return familySelect;
+  const toolbar = document.querySelector(
+    '[data-sx-panel="tilemap"] .sx-toolbar'
+  ) as HTMLElement | null;
+  if (!toolbar) return null;
+
+  const sel = document.createElement("select");
+  sel.id = "tilemapGameMapSelect";
+  sel.title = "Switch between this game's maps (edits are kept per map)";
+  sel.style.display = "none";
+  sel.style.maxWidth = "220px";
+  sel.addEventListener("change", async () => {
+    if (!gameSession) return;
+    const key = sel.value;
+    if (!key || key === gameSession.currentKey) return;
+    syncEditorIntoSession();
+    const ok = await loadSessionMap(key);
+    if (ok) {
+      const entry = gameSession.maps.get(key);
+      setStatus(`MAP · ${key.toUpperCase()}${entry?.dirty ? " (UNSAVED EDITS)" : ""}`);
+    } else if (familySelect) {
+      familySelect.value = gameSession.currentKey;
+    }
+  });
+
+  const anchor = $("tilemapGridBtn");
+  if (anchor && anchor.parentElement === toolbar) toolbar.insertBefore(sel, anchor);
+  else toolbar.appendChild(sel);
+  familySelect = sel;
+  return sel;
+}
+
+function updateFamilySelect() {
+  const sel = ensureFamilySelect();
+  if (!sel) return;
+  if (!gameSession || gameSession.maps.size <= 1) {
+    sel.style.display = "none";
+    sel.innerHTML = "";
+    return;
+  }
+  sel.innerHTML = "";
+  for (const [key, entry] of gameSession.maps) {
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = entry.dirty ? `${key} *` : key;
+    sel.appendChild(opt);
+  }
+  sel.value = gameSession.currentKey;
+  sel.style.display = "";
+}
+
+/** --------------------------- Preload ---------------------------- */
+
+function ackPreload() {
+  postToLauncher({ type: "spritex-tilemap-preload-ack" });
+}
+
+async function handleTilemapPreload(data: any) {
+  // Ack first — the launcher re-posts every 500ms until it hears this.
+  ackPreload();
+
+  const gameId = typeof data?.gameId === "string" ? data.gameId : "";
+  const primary = typeof data?.primary === "string" ? data.primary : "";
+
+  // Dedupe re-posts: same session already active → the re-ack is enough.
+  if (gameSession && gameSession.gameId === gameId && gameSession.primary === primary) {
+    return;
+  }
+
+  const rawMaps: any[] = Array.isArray(data?.maps) ? data.maps : [];
+  const maps = new Map<string, GameSessionEntry>();
+  for (const m of rawMaps) {
+    if (!m || typeof m.key !== "string" || !m.key || !m.json) continue;
+    const text = JSON.stringify(m.json);
+    maps.set(m.key, {
+      path: typeof m.path === "string" ? m.path : null,
+      json: m.json,
+      png: typeof m.png === "string" ? m.png : null,
+      text,
+      originalText: text,
+      dirty: false,
+    });
+  }
+  if (!maps.size || !maps.has(primary)) {
+    setStatus("TILEMAP PRELOAD REJECTED — BAD PAYLOAD");
+    return;
+  }
+
+  // Register the session before the async load so the launcher's 500ms
+  // re-posts hit the dedupe path instead of re-triggering the load.
+  gameSession = { gameId, primary, currentKey: primary, maps };
+  editorSessionKey = null;
+
+  (
+    document.querySelector('.sx-tab[data-sx-tab="tilemap"]') as HTMLElement | null
+  )?.click();
+
+  const ok = await loadSessionMap(primary);
+  updateFamilySelect();
+  setStatus(
+    ok
+      ? `GAME SESSION · ${gameId.toUpperCase()} · ${maps.size} MAP${maps.size === 1 ? "" : "S"} · ${primary.toUpperCase()}`
+      : `GAME SESSION · FAILED TO LOAD "${primary.toUpperCase()}"`
+  );
+}
+
+/** ---------------------------- Save ------------------------------ */
+
+// mario-sp reads maps/<key> records; its key sanitizer uses '-'.
+const MARIO_KEY_RE = /[.#$/\[\]]/g;
+
+async function saveGameSession() {
+  if (!gameSession) return;
+  syncEditorIntoSession();
+
+  const dirtyEntries: Array<[string, GameSessionEntry]> = [];
+  for (const kv of gameSession.maps) {
+    if (kv[1].dirty) dirtyEntries.push(kv);
+  }
+  if (!dirtyEntries.length) {
+    setStatus("GAME SAVE · NO CHANGES");
+    return;
+  }
+  setStatus(`GAME SAVE · ${dirtyEntries.length} MAP${dirtyEntries.length === 1 ? "" : "S"}…`);
+
+  // 1) Launcher save: one message carrying every dirty map that has a path.
+  const files = dirtyEntries
+    .filter(([, e]) => e.path != null)
+    .map(([, e]) => ({ path: e.path as string, text: e.text }));
+  const launcherSent =
+    files.length > 0 &&
+    postToLauncher({
+      type: "cmg-tilemap-save",
+      gameId: gameSession.gameId,
+      files,
+    });
+  if (launcherSent) {
+    setStatus(`GAME SAVE · SENT ${files.length} FILE${files.length === 1 ? "" : "S"} TO LAUNCHER…`);
+  }
+
+  // 2) RTDB save, if connected — offline/failed Firebase must never block
+  //    the launcher save, so the whole block is best-effort.
+  const rtdbOk = new Set<string>();
+  try {
+    const db = getDB();
+    for (const [key, entry] of dirtyEntries) {
+      const marioKey = key.replace(MARIO_KEY_RE, "-");
+      // Record shape mario-sp loads: stringified Tiled JSON + tileset dataURL.
+      await set(ref(db, `maps/${marioKey}`), {
+        json: entry.text,
+        png: entry.png ?? null,
+      });
+      // Native SpriteX record so the map shows in the cloud list too.
+      await set(ref(db, `tilemaps/${sanitizeKey(key)}`), {
+        json: entry.text,
+        tileset: null,
+        png: entry.png ?? null,
+      });
+      rtdbOk.add(key);
+    }
+  } catch (err) {
+    console.error("Game session RTDB save failed (continuing):", err);
+  }
+  if (rtdbOk.size) populateTilemapSelect();
+
+  // 3) A map is clean once the launcher took it or RTDB stored it.
+  let cleaned = 0;
+  for (const [key, entry] of dirtyEntries) {
+    if ((launcherSent && entry.path != null) || rtdbOk.has(key)) {
+      entry.originalText = entry.text;
+      entry.dirty = false;
+      cleaned++;
+    }
+  }
+  if (editorSessionKey && !gameSession.maps.get(editorSessionKey)?.dirty) {
+    mapDirty = false;
+  }
+  updateFamilySelect();
+
+  const parts: string[] = [];
+  if (launcherSent) parts.push(`LAUNCHER ${files.length}`);
+  if (rtdbOk.size) parts.push(`RTDB ${rtdbOk.size}`);
+  setStatus(
+    parts.length
+      ? `GAME SAVE · ${parts.join(" + ")} · ${cleaned}/${dirtyEntries.length} MAP${dirtyEntries.length === 1 ? "" : "S"} SAVED`
+      : "GAME SAVE FAILED · NO LAUNCHER PATHS, RTDB UNREACHABLE"
+  );
+}
+
+function handleSaveAck(data: any) {
+  if (data?.ok) {
+    const n = typeof data.saved === "number" ? data.saved : undefined;
+    setStatus(`LAUNCHER SAVED${n != null ? ` ${n} FILE${n === 1 ? "" : "S"}` : ""} · OK`);
+  } else {
+    setStatus(
+      `LAUNCHER SAVE FAILED · ${String(data?.error || "UNKNOWN ERROR").toUpperCase()}`
+    );
+  }
+}
+
+/** Wired during boot in main.ts. */
+export function initTilemapGameBridge() {
+  window.addEventListener("message", (ev: MessageEvent) => {
+    // Only honor messages from the embedding launcher itself.
+    if (window.parent === window || ev.source !== window.parent) return;
+    const data = ev.data;
+    if (!data || typeof data !== "object") return;
+    if (data.type === "spritex-tilemap-preload") {
+      void handleTilemapPreload(data);
+    } else if (data.type === "cmg-tilemap-save-ack") {
+      handleSaveAck(data);
+    }
+  });
+}
+
 /** ========================= UI wiring =========================== */
 
 function cycleZoom() {
@@ -1618,7 +1942,15 @@ export function initTilemapEditor(d: EditorDeps) {
   });
   $("tilemapPaletteCanvas")?.addEventListener("click", onPaletteClick as any);
   $("tilemapDownloadBtn")?.addEventListener("click", downloadMapJson);
-  $("tilemapSaveCloudBtn")?.addEventListener("click", saveTilemapToCloud);
+  $("tilemapSaveCloudBtn")?.addEventListener("click", () => {
+    // During a launcher game session the save button saves the whole dirty
+    // map family (launcher files + RTDB); standalone behavior is unchanged.
+    if (gameSession && editorSessionKey) {
+      void saveGameSession();
+    } else {
+      void saveTilemapToCloud();
+    }
+  });
 
   ($("tilemapSelect") as HTMLSelectElement | null)?.addEventListener(
     "change",
@@ -1686,5 +2018,22 @@ export function initTilemapEditor(d: EditorDeps) {
     cycleLayer: tilemapCycleLayer,
     undo: tilemapUndo,
     serialize: () => (map ? serializeMap() : null),
+    // Game-session introspection + a way for scripted tests to feed a
+    // preload payload without a real embedding launcher.
+    getSession: () =>
+      gameSession
+        ? {
+            gameId: gameSession.gameId,
+            primary: gameSession.primary,
+            currentKey: gameSession.currentKey,
+            editorKey: editorSessionKey,
+            keys: [...gameSession.maps.keys()],
+            dirtyKeys: [...gameSession.maps.entries()]
+              .filter(([, e]) => e.dirty)
+              .map(([k]) => k),
+          }
+        : null,
+    debugPreload: (payload: any) => handleTilemapPreload(payload),
+    saveSession: () => saveGameSession(),
   };
 }
