@@ -21,6 +21,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { createCanvas, loadImage } from "./canvas-shim.mjs";
 
 const DATABASE_URL = "https://evil-invaders-default-rtdb.firebaseio.com";
@@ -65,7 +66,7 @@ function normalizeAtlasJson(jsonVal) {
   }
 }
 
-function decodeFrameKey(key) {
+export function decodeFrameKey(key) {
   if (!key.startsWith("k_")) return key;
   const hex = key.slice(2);
   let result = "";
@@ -75,10 +76,15 @@ function decodeFrameKey(key) {
   return result;
 }
 
-function encodeFrameKey(name) {
-  return `k_${Array.from(name)
-    .map((ch) => ch.codePointAt(0).toString(16).padStart(4, "0"))
-    .join("")}`;
+export function encodeFrameKey(name) {
+  // Encode UTF-16 code units, not code points: decodeFrameKey slices the hex
+  // in fixed 4-digit chunks, and astral chars (emoji) would emit 5-digit
+  // groups that break the round-trip.
+  let hex = "";
+  for (let i = 0; i < name.length; i += 1) {
+    hex += name.charCodeAt(i).toString(16).padStart(4, "0");
+  }
+  return `k_${hex}`;
 }
 
 /** Get the frames map from an atlas JSON (handles both flat and textures[] formats). */
@@ -305,7 +311,12 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
-});
+const runAsCli =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (runAsCli) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  });
+}
