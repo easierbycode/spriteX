@@ -15,10 +15,12 @@ import {
   rgbToHex,
   hexToRgb,
   getAtlasActualWidth,
+  decodeAtlasFrameKey,
   type DetectedSprite,
   type RGB,
   type SpriteData,
 } from "./atlasManager";
+import { initPackerTab, setPackerAtlasNames } from "./packerTab";
 import { initTilemapEditor } from "./tilemapEditor";
 import { initGamepad } from "./gamepad";
 
@@ -1273,16 +1275,6 @@ function scheduleAtlasOrderSync() {
   return atlasSyncPromise;
 }
 
-function decodeAtlasFrameKey(key: string): string {
-  if (!key.startsWith("k_")) return key;
-  const hex = key.slice(2);
-  let result = "";
-  for (let i = 0; i < hex.length; i += 4) {
-    result += String.fromCodePoint(parseInt(hex.slice(i, i + 4), 16));
-  }
-  return result;
-}
-
 function renderAtlasFrames() {
   const cont = $("atlasFramesContainer") as HTMLDivElement;
   cont.innerHTML = "";
@@ -1668,6 +1660,9 @@ async function populateAtlasSelect() {
         });
 
         select.disabled = false;
+
+        // Keep the PACKER tab's atlas dropdowns in sync with the same fetch.
+        setPackerAtlasNames(Object.keys(atlases));
     } catch (err) {
         select.innerHTML = "";
         const opt = document.createElement("option");
@@ -2660,6 +2655,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupCanvases();
   setupTheme();
   wireUI();
+  initPackerTab();
   setupPWA();
   initTilemapEditor({ downloadFile, setStatus: setStatusLine });
   initGamepad({ setStatus: setStatusLine });

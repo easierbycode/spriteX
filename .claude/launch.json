@@ -4,8 +4,8 @@
     {
       "name": "spritex",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["http-server", "dist", "-p", "8123", "-c-1"],
-      "port": 8123
+      "runtimeArgs": ["http-server", "dist", "-c-1"],
+      "autoPort": true
     }
   ]
 }

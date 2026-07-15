@@ -27,6 +27,7 @@
         --sx-line-soft: rgba(140,255,110,.22);
         --sx-yellow: #F6FF4A;
         --sx-yellow-line: rgba(246,255,74,.5);
+        --sx-amber: #FFB84A;
         --sx-title: #dcffc2;
         --sx-label: #bfffa0;
         --sx-panel-grad: linear-gradient(180deg, rgba(28,64,34,.35), rgba(8,22,12,.6));
@@ -406,6 +407,112 @@
         color: var(--sx-green-dim);
       }
 
+      /* packer tab — frame / sprite grids */
+      .pk-section-title {
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+        font-size: 12px; letter-spacing: .22em; color: rgba(156,255,107,.55);
+        margin-bottom: 8px;
+      }
+      .pk-grid {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+        gap: 6px; padding: 8px; min-height: 74px;
+        border: 1px solid var(--sx-line); border-radius: 10px;
+        background: rgba(6,16,8,.4);
+      }
+      .pk-empty {
+        grid-column: 1 / -1;
+        border: 1px dashed var(--sx-line); border-radius: 10px;
+        padding: 22px 16px; text-align: center;
+        font-size: 13px; letter-spacing: .14em; color: var(--sx-green-dim);
+      }
+      .pk-cell {
+        position: relative; cursor: pointer;
+        display: flex; flex-direction: column; align-items: center;
+        padding: 6px 4px 4px;
+        border: 2px solid transparent; border-radius: 6px;
+        background: rgba(8,20,10,.6);
+      }
+      .pk-cell:hover { border-color: rgba(246,255,74,.45); }
+      .pk-cell img {
+        width: 56px; height: 56px; object-fit: contain;
+        image-rendering: pixelated; image-rendering: crisp-edges;
+        background: var(--sx-checker-sm); background-size: 10px 10px;
+        border-radius: 4px;
+      }
+      .pk-cell-label {
+        max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        margin-top: 3px; font-size: 10px; letter-spacing: .06em;
+        color: var(--sx-green-dim);
+      }
+      .pk-cell.selected {
+        border-color: var(--sx-green);
+        box-shadow: 0 0 12px rgba(156,255,107,.3);
+      }
+      .pk-cell.target {
+        border-color: var(--sx-yellow);
+        box-shadow: 0 0 14px rgba(246,255,74,.4);
+      }
+      .pk-cell.pending { border-color: var(--sx-yellow); border-style: dashed; }
+      .pk-cell.replaced { border-color: var(--sx-green); }
+      .pk-cell.replaced .pk-cell-label { color: var(--sx-green); }
+      .pk-cell.added { border-color: var(--sx-amber); }
+      .pk-cell.added .pk-cell-label { color: var(--sx-amber); }
+      .pk-badge {
+        position: absolute; top: 2px; right: 2px;
+        min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 11px; font-weight: 700;
+        background: var(--sx-yellow); color: #141602;
+      }
+      .pk-cell-btn {
+        position: absolute; top: 2px; left: 2px;
+        width: 18px; height: 18px; padding: 0; border-radius: 4px;
+        display: flex; align-items: center; justify-content: center;
+        cursor: pointer; font-size: 11px; line-height: 1;
+        font-family: 'Share Tech Mono', monospace;
+        color: var(--sx-title);
+        border: 1px solid rgba(140,255,110,.4);
+        background: rgba(8,20,10,.85);
+      }
+      .pk-cell-btn:hover { border-color: rgba(246,255,74,.6); color: var(--sx-yellow); }
+
+      /* packer dock — target / replacement mapping rows */
+      .pk-map-list {
+        display: flex; flex-direction: column; gap: 6px;
+        max-height: 220px; overflow-y: auto;
+        border: 1px solid var(--sx-line); border-radius: 10px;
+        padding: 8px; background: rgba(6,16,8,.4);
+      }
+      .pk-map-row {
+        display: flex; align-items: center; gap: 8px;
+        font-size: 11px; letter-spacing: .06em; color: var(--sx-label);
+        min-width: 0;
+      }
+      .pk-map-row img {
+        width: 26px; height: 26px; object-fit: contain; flex-shrink: 0;
+        image-rendering: pixelated; image-rendering: crisp-edges;
+        background: var(--sx-checker-sm); background-size: 8px 8px;
+        border-radius: 4px;
+      }
+      .pk-map-order {
+        min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 11px; font-weight: 700;
+        background: var(--sx-yellow); color: #141602;
+      }
+      .pk-map-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .pk-map-meta { margin-left: auto; flex-shrink: 0; color: var(--sx-green-dim); }
+      .pk-map-remove {
+        flex-shrink: 0; width: 18px; height: 18px; padding: 0; border-radius: 4px;
+        display: flex; align-items: center; justify-content: center;
+        cursor: pointer; font-size: 10px; line-height: 1;
+        font-family: 'Share Tech Mono', monospace;
+        color: var(--sx-title);
+        border: 1px solid rgba(140,255,110,.4);
+        background: rgba(8,20,10,.85);
+      }
+      .pk-map-remove:hover { border-color: rgba(246,255,74,.6); color: var(--sx-yellow); }
+
       #atlasPreviewImg {
         max-width: 100%;
         border: 1px solid var(--sx-yellow-line);
@@ -580,6 +687,7 @@
         <button class="sx-tab-step" id="sxPrevTab" title="prev section (Q)">LB</button>
         <button class="sx-tab active" data-sx-tab="extract">EXTRACT</button>
         <button class="sx-tab" data-sx-tab="view">VIEW</button>
+        <button class="sx-tab" data-sx-tab="packer">PACKER</button>
         <button class="sx-tab" data-sx-tab="tilemap">TILEMAP</button>
         <button class="sx-tab-step" id="sxNextTab" title="next section (E)">RB</button>
         <span class="sx-tab-hint" id="sxTabHint">Q / E — SWITCH SECTION</span>
@@ -885,6 +993,81 @@
         </div>
       </div>
 
+      <!-- ══════════ PACKER ══════════ -->
+      <div class="sx-main" data-sx-panel="packer" hidden>
+        <div class="sx-panel">
+          <div class="sx-panel-head">
+            <span>ATLAS PACKER</span>
+            <span class="dim" id="packerHint">SELECT AN ATLAS TO EDIT</span>
+          </div>
+          <div class="sx-toolbar">
+            <label for="packerAtlasSelect">ATLAS</label>
+            <select id="packerAtlasSelect" style="min-width:240px">
+              <option value="">-- Select an atlas --</option>
+            </select>
+            <span id="packerAtlasStatus" class="sx-note" style="margin-left:auto"></span>
+          </div>
+          <div style="flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:18px">
+            <div>
+              <div class="pk-section-title">
+                <span>CURRENT ATLAS FRAMES (<span id="packerFrameCount">0</span>)</span>
+                <span style="margin-left:auto;letter-spacing:.14em">CLICK A FRAME — SET REPLACE TARGET</span>
+              </div>
+              <div id="packerCurrentGrid" class="pk-grid">
+                <div class="pk-empty">Select an atlas to see its frames.</div>
+              </div>
+            </div>
+            <div>
+              <div class="pk-section-title">
+                <span>AVAILABLE SPRITES</span>
+                <select id="packerSourceSelect" style="min-width:220px">
+                  <option value="sprites">FIREBASE SPRITES — sprites/*</option>
+                  <option value="uploads">UPLOADED SPRITES</option>
+                </select>
+                <button id="packerRefreshSourceBtn" class="btn" type="button" title="Reload this source from Firebase">↻ REFRESH</button>
+                <label class="btn" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+                  📤 UPLOAD SPRITES
+                  <input id="packerUploadInput" type="file" multiple accept="image/*" style="display:none" />
+                </label>
+                <span id="packerSourceStatus" style="margin-left:auto;letter-spacing:.12em"></span>
+              </div>
+              <div id="packerAvailableGrid" class="pk-grid">
+                <div class="pk-empty">No sprites in this source.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- packer dock -->
+        <div class="sx-dock">
+          <div class="sx-dock-head">
+            <span class="sx-dock-title">REPLACE</span>
+            <span class="sx-dock-count" id="packerPendingCount"></span>
+          </div>
+          <div class="sx-dock-body">
+            <div class="row"><span class="subtitle">TARGET FRAME</span></div>
+            <div id="packerTargetInfo" class="sx-empty-hint">Load an atlas, then click the frame to replace.</div>
+            <div class="row"><span class="subtitle">REPLACEMENT SPRITES — IN ORDER</span></div>
+            <div id="packerSourceInfo" class="sx-empty-hint">No sprites selected. Click sprites in AVAILABLE SPRITES — order matters.</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <button id="packerReplaceBtn" class="btn primary" disabled>↻ REPLACE</button>
+              <button id="packerAddBtn" class="btn" disabled>+ ADD AS NEW</button>
+            </div>
+            <button id="packerClearBtn" class="btn" disabled>CLEAR SELECTION</button>
+            <div class="row" style="margin-top:6px"><span class="subtitle">PENDING CHANGES</span></div>
+            <div id="packerChangesInfo" style="font-size:12px;letter-spacing:.12em;color:var(--sx-green-dim)">No pending changes.</div>
+            <button id="packerResetBtn" class="btn" disabled>RESET ALL CHANGES</button>
+          </div>
+          <div class="sx-dock-actions">
+            <button id="packerSaveBtn" class="sx-action primary" disabled>
+              <span class="pad-btn pad-a">A</span>
+              <span class="label">SAVE TO CLOUD</span>
+              <span class="meta">atlases/*</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- footer -->
       <div class="sx-footer">
         <span class="sx-footer-hints" data-sx-hints="extract" style="display:flex;gap:30px">
@@ -903,6 +1086,11 @@
           <span class="sx-hint"><span class="pad-btn pad-b">B</span><span class="sx-hint-label">BG</span></span>
           <span class="sx-hint"><span class="pad-btn pad-x">X</span><span class="sx-hint-label">JSON</span></span>
           <span class="sx-hint"><span class="pad-btn pad-y">Y</span><span class="sx-hint-label">PNG</span></span>
+        </span>
+        <span class="sx-footer-hints" data-sx-hints="packer" style="display:none;gap:30px">
+          <span class="sx-hint"><span class="pad-btn pad-a">A</span><span class="sx-hint-label">TARGET</span></span>
+          <span class="sx-hint"><span class="pad-btn pad-x">X</span><span class="sx-hint-label">REPLACE</span></span>
+          <span class="sx-hint"><span class="pad-btn pad-y">Y</span><span class="sx-hint-label">ADD NEW</span></span>
         </span>
         <span class="sx-status" id="sxStatusLine">SPRITEX READY</span>
       </div>
@@ -933,22 +1121,25 @@
     <script>
       // ── workbench chrome: tabs, clock, Q/E navigation ──
       (function () {
-        var TABS = ["extract", "view", "tilemap"];
-        var TITLES = { extract: "EXTRACT", tilemap: "TILEMAP", view: "VIEW" };
+        var TABS = ["extract", "view", "packer", "tilemap"];
+        var TITLES = { extract: "EXTRACT", view: "VIEW", packer: "PACKER", tilemap: "TILEMAP" };
         var HEADER = {
           extract: "SPRITE SHEET WORKBENCH · EVIL INVADERS",
-          tilemap: "TILED MAP EDITOR · LAYERS · OBJECTS · GAMEPAD READY",
-          view: "ATLAS · CHARACTER · SPRITE VIEWER · RTDB LIVE"
+          view: "ATLAS · CHARACTER · SPRITE VIEWER · RTDB LIVE",
+          packer: "ATLAS FRAME REPLACER · RTDB LIVE",
+          tilemap: "TILED MAP EDITOR · LAYERS · OBJECTS · GAMEPAD READY"
         };
         var HINTS = {
           extract: "BG AUTO-DETECTED ON LOAD",
-          tilemap: "DROP level.json + tiles.json + tiles.png",
-          view: "SOURCE: RTDB atlases/* characters/* sprites/*"
+          view: "SOURCE: RTDB atlases/* characters/* sprites/*",
+          packer: "PICK TARGET FRAME, THEN REPLACEMENT SPRITE(S)",
+          tilemap: "DROP level.json + tiles.json + tiles.png"
         };
         var STATUS = {
           extract: "EXTRACT · CLICK SPRITES TO SELECT",
-          tilemap: "TILEMAP · LOAD A MAP TO EDIT",
-          view: "VIEW · PICK ATLAS, CHARACTER OR SPRITE"
+          view: "VIEW · PICK ATLAS, CHARACTER OR SPRITE",
+          packer: "PACKER · SELECT FRAME TO REPLACE, THEN REPLACEMENTS",
+          tilemap: "TILEMAP · LOAD A MAP TO EDIT"
         };
         var current = "extract";
 
