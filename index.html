@@ -483,6 +483,67 @@
         background: rgba(246,255,74,.06);
       }
 
+      /* tilemap editor */
+      .tm-layer-row {
+        display: flex; align-items: center; gap: 10px;
+        border: 1px solid var(--sx-line); border-radius: 8px;
+        padding: 6px 10px; cursor: pointer;
+        font-size: 12px; letter-spacing: .1em; color: var(--sx-label);
+        background: rgba(8,20,10,.5);
+      }
+      .tm-layer-row:hover { border-color: rgba(246,255,74,.5); }
+      .tm-layer-row.active {
+        border-color: var(--sx-yellow);
+        box-shadow: 0 0 12px rgba(246,255,74,.2);
+        color: var(--sx-yellow);
+      }
+      .tm-layer-row input[type="checkbox"] { accent-color: #9CFF6B; cursor: pointer; }
+      .tm-layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .tm-layer-badge {
+        font-size: 10px; letter-spacing: .14em;
+        border: 1px solid rgba(140,255,110,.35); border-radius: 5px;
+        padding: 2px 6px; color: var(--sx-green-dim);
+      }
+      #tilemapLayersList { display: flex; flex-direction: column; gap: 6px; }
+      #tilemapPaletteCanvas {
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+        display: block; cursor: pointer;
+      }
+      #tilemapCanvasContainer { position: absolute; inset: 0; overflow: auto; }
+      #tilemapOverlayCanvas { position: absolute; left: 0; top: 0; }
+      #tilemapGridBtn.active {
+        border-color: var(--sx-yellow-line); color: var(--sx-yellow);
+      }
+      #tilemapEraserBtn.active {
+        background: linear-gradient(180deg, #fbff8a, #F6FF4A 45%, #c3cf07);
+        border-color: #fcffb0; color: #141602;
+      }
+
+      /* gamepad virtual cursor */
+      #padCursor {
+        position: fixed; left: 0; top: 0; z-index: 5000;
+        display: none; pointer-events: none;
+        transform: translate(-50%, -50%);
+      }
+      .pad-cursor-ring {
+        position: absolute; left: -14px; top: -14px;
+        width: 28px; height: 28px; border-radius: 50%;
+        border: 2px solid rgba(246,255,74,.9);
+        box-shadow: 0 0 14px rgba(246,255,74,.5), inset 0 0 8px rgba(246,255,74,.25);
+      }
+      .pad-cursor-dot {
+        position: absolute; left: -2px; top: -2px;
+        width: 4px; height: 4px; border-radius: 50%;
+        background: var(--sx-yellow);
+      }
+      @keyframes padCursorPulse {
+        0% { transform: translate(-50%, -50%) scale(1); }
+        40% { transform: translate(-50%, -50%) scale(1.6); }
+        100% { transform: translate(-50%, -50%) scale(1); }
+      }
+      #padCursor.pad-cursor-pulse { animation: padCursorPulse .22s ease-out; }
+
       #installBtn { display: none; }
       .sx-note { min-height: 18px; font-size: 12px; letter-spacing: .12em; color: var(--sx-yellow); }
       #bgStatus { font-size: 12px; letter-spacing: .12em; color: var(--sx-yellow); }
@@ -519,6 +580,7 @@
         <button class="sx-tab-step" id="sxPrevTab" title="prev section (Q)">LB</button>
         <button class="sx-tab active" data-sx-tab="extract">EXTRACT</button>
         <button class="sx-tab" data-sx-tab="view">VIEW</button>
+        <button class="sx-tab" data-sx-tab="tilemap">TILEMAP</button>
         <button class="sx-tab-step" id="sxNextTab" title="next section (E)">RB</button>
         <span class="sx-tab-hint" id="sxTabHint">Q / E — SWITCH SECTION</span>
       </div>
@@ -621,7 +683,72 @@
         </div>
       </div>
 
-      <!-- ══════════ ATLAS ══════════ -->
+      <!-- ══════════ TILEMAP ══════════ -->
+      <div class="sx-main" data-sx-panel="tilemap" hidden>
+        <div class="sx-panel">
+          <div class="sx-panel-head">
+            <span>TILEMAP EDITOR</span>
+            <span>CLICK / A — PLACE</span>
+            <span class="dim">RIGHT-CLICK / X — DELETE · ARROWS / D-PAD — MOVE</span>
+          </div>
+          <div class="sx-toolbar">
+            <input id="tilemapFileInput" type="file" multiple accept=".json,.png,application/json,image/png" style="max-width:300px" />
+            <span id="tilemapFileStatus" class="sx-note" style="flex:1;min-width:160px">DROP MAP JSON + TILESET PNG (+ TILESET JSON) HERE</span>
+            <button id="tilemapGridBtn" class="btn" title="Toggle grid (G)">GRID</button>
+            <button id="tilemapZoomBtn" class="btn" title="Cycle zoom (+)">ZOOM: 3x</button>
+          </div>
+          <div class="sx-workspace">
+            <div id="tilemapCanvasContainer" class="canv-wrap">
+              <canvas id="tilemapCanvas" width="640" height="480"></canvas>
+              <canvas id="tilemapOverlayCanvas" width="640" height="480"></canvas>
+            </div>
+            <div class="sx-zoom-chip" style="right:auto;left:16px" id="tilemapInfoChip">NO MAP LOADED</div>
+          </div>
+        </div>
+
+        <!-- tilemap dock -->
+        <div class="sx-dock">
+          <div class="sx-dock-head">
+            <span class="sx-dock-title">TILEMAP</span>
+            <span class="sx-dock-count" id="tilemapDims">—</span>
+          </div>
+          <div class="sx-dock-body">
+            <div class="row" style="justify-content:space-between">
+              <span class="subtitle">LAYERS</span>
+              <button id="tilemapAddObjLayerBtn" class="btn" title="Append a new object layer">+ OBJ LAYER</button>
+            </div>
+            <div id="tilemapLayersList" class="sx-empty-hint">Load a tilemap to see layers.</div>
+            <div class="row" style="justify-content:space-between;margin-top:6px">
+              <span class="subtitle">TILE PALETTE</span>
+              <button id="tilemapEraserBtn" class="btn" title="Toggle eraser (places empty tiles)">ERASER</button>
+            </div>
+            <div id="tilemapPaletteWrap" style="overflow:auto;max-height:250px;border:1px solid var(--sx-line);border-radius:10px;background:var(--sx-checker-sm);padding:6px">
+              <canvas id="tilemapPaletteCanvas" width="10" height="10"></canvas>
+            </div>
+            <div id="tilemapPaletteInfo" style="font-size:12px;letter-spacing:.1em;color:var(--sx-green-dim)">NO TILESET LOADED</div>
+            <div id="tilemapObjectInspector" style="display:none;flex-direction:column;gap:8px;border-top:1px dashed rgba(140,255,110,.25);padding-top:10px">
+              <span class="subtitle">OBJECT</span>
+              <span id="tilemapObjInfo" style="font-size:12px;letter-spacing:.1em;color:var(--sx-green-dim)">NO OBJECT UNDER CURSOR</span>
+              <input id="tilemapObjName" type="text" placeholder="OBJECT NAME" disabled />
+              <input id="tilemapObjType" type="text" placeholder="OBJECT TYPE" disabled />
+            </div>
+          </div>
+          <div class="sx-dock-section">
+            <span>CLOUD — tilemaps/*</span>
+          </div>
+          <div class="sx-dock-actions">
+            <select id="tilemapSelect">
+              <option value="">-- Load from cloud --</option>
+            </select>
+            <input id="tilemapNameInput" type="text" placeholder="TILEMAP NAME (e.g. level4-2)" />
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <button id="tilemapDownloadBtn" class="btn" disabled>DOWNLOAD JSON</button>
+              <button id="tilemapSaveCloudBtn" class="btn primary" disabled>SAVE TO CLOUD</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- ══════════ VIEW ══════════ -->
       <div class="sx-main" data-sx-panel="view" hidden>
         <div class="sx-panel">
@@ -764,6 +891,13 @@
           <span class="sx-hint"><span class="pad-btn pad-a">A</span><span class="sx-hint-label">SELECT</span></span>
           <span class="sx-hint"><span class="pad-btn pad-x">X</span><span class="sx-hint-label">JOIN</span></span>
         </span>
+        <span class="sx-footer-hints" data-sx-hints="tilemap" style="display:none;gap:30px">
+          <span class="sx-hint"><span class="pad-btn pad-a">A</span><span class="sx-hint-label">PLACE</span></span>
+          <span class="sx-hint"><span class="pad-btn pad-x">X</span><span class="sx-hint-label">DELETE</span></span>
+          <span class="sx-hint"><span class="pad-btn pad-y">Y</span><span class="sx-hint-label">PICK</span></span>
+          <span class="sx-hint"><span class="sx-hint-keys">LT/RT</span><span class="sx-hint-label">LAYER</span></span>
+          <span class="sx-hint"><span class="sx-hint-keys">SELECT</span><span class="sx-hint-label">UNDO</span></span>
+        </span>
         <span class="sx-footer-hints" data-sx-hints="view" style="display:none;gap:30px">
           <span class="sx-hint"><span class="pad-btn pad-a">A</span><span class="sx-hint-label">LOAD</span></span>
           <span class="sx-hint"><span class="pad-btn pad-b">B</span><span class="sx-hint-label">BG</span></span>
@@ -799,18 +933,21 @@
     <script>
       // ── workbench chrome: tabs, clock, Q/E navigation ──
       (function () {
-        var TABS = ["extract", "view"];
-        var TITLES = { extract: "EXTRACT", view: "VIEW" };
+        var TABS = ["extract", "view", "tilemap"];
+        var TITLES = { extract: "EXTRACT", tilemap: "TILEMAP", view: "VIEW" };
         var HEADER = {
           extract: "SPRITE SHEET WORKBENCH · EVIL INVADERS",
+          tilemap: "TILED MAP EDITOR · LAYERS · OBJECTS · GAMEPAD READY",
           view: "ATLAS · CHARACTER · SPRITE VIEWER · RTDB LIVE"
         };
         var HINTS = {
           extract: "BG AUTO-DETECTED ON LOAD",
+          tilemap: "DROP level.json + tiles.json + tiles.png",
           view: "SOURCE: RTDB atlases/* characters/* sprites/*"
         };
         var STATUS = {
           extract: "EXTRACT · CLICK SPRITES TO SELECT",
+          tilemap: "TILEMAP · LOAD A MAP TO EDIT",
           view: "VIEW · PICK ATLAS, CHARACTER OR SPRITE"
         };
         var current = "extract";
@@ -830,6 +967,7 @@
           document.getElementById("sxHeaderInfo").textContent = HEADER[tab];
           document.getElementById("sxTabHint").textContent = HINTS[tab];
           document.getElementById("sxStatusLine").textContent = STATUS[tab];
+          document.dispatchEvent(new CustomEvent("sx-tab-change", { detail: { tab: tab } }));
         }
 
         function step(d) {
