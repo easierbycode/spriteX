@@ -8,7 +8,8 @@
     "copy": "node scripts/copy-static.mjs",
     "build": "npm run build:web && npm run copy",
     "download:atlas": "node scripts/download-atlas.mjs",
-    "extract:frames": "node scripts/extract-frames.mjs"
+    "extract:frames": "node scripts/extract-frames.mjs",
+    "test": "node scripts/test-frame-keys.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.21.5",

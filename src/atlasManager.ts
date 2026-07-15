@@ -278,9 +278,14 @@ function ensureDataURL(s: string): string {
 
 /** Firebase RTDB keys cannot contain . # $ / [ ] */
 function encodeAtlasFrameKey(name: string): string {
-  return `k_${Array.from(name)
-    .map((ch) => ch.codePointAt(0)!.toString(16).padStart(4, "0"))
-    .join("")}`;
+  // Encode UTF-16 code units, not code points: decoders slice the hex in fixed
+  // 4-digit chunks, and astral chars (emoji) would emit 5-digit groups that
+  // break the round-trip. Surrogate pairs become two 4-digit groups instead.
+  let hex = "";
+  for (let i = 0; i < name.length; i++) {
+    hex += name.charCodeAt(i).toString(16).padStart(4, "0");
+  }
+  return `k_${hex}`;
 }
 
 const RTDB_INVALID_KEY_CHARS = /[.#$\/\[\]]/;
