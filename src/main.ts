@@ -21,6 +21,8 @@ import {
   type SpriteData,
 } from "./atlasManager";
 import { initPackerTab, setPackerAtlasNames } from "./packerTab";
+import { initTilemapEditor } from "./tilemapEditor";
+import { initGamepad } from "./gamepad";
 
 let originalCanvas: HTMLCanvasElement;
 let originalCtx: CanvasRenderingContext2D;
@@ -2655,6 +2657,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireUI();
   initPackerTab();
   setupPWA();
+  initTilemapEditor({ downloadFile, setStatus: setStatusLine });
+  initGamepad({ setStatus: setStatusLine });
   await populateCharacterSelect();
   await populateAtlasSelect();
   await populateSpritePreviewDropdownFromDB();
