@@ -51,6 +51,9 @@ let atlasFrames: string[] = []; // All frames extracted from atlas
 let atlasFrameNames: string[] = []; // Frame keys from atlas JSON
 let atlasFrameRects: DetectedSprite[] = []; // Frame rects (atlas px), parallel to atlasFrames
 let atlasSelectedFrameIndices = new Set<number>();
+// Anchor for shift-click range selection in the View tab (index of the last
+// frame clicked without shift). null when there is no valid anchor.
+let atlasLastClickedFrameIndex: number | null = null;
 let atlasAnimFrameIndex = 0;
 let atlasAnimPlaying = false;
 let atlasReorderEnabled = false;
@@ -1177,6 +1180,7 @@ async function buildAtlasAndPreview() {
   // --- New logic for atlas frame preview ---
   stopAtlasPreview();
   atlasSelectedFrameIndices.clear();
+  atlasLastClickedFrameIndex = null;
 
   await new Promise<void>(resolve => {
     const atlasImg = new Image();
@@ -1309,16 +1313,41 @@ function renderAtlasFrames() {
     label.className = "atlas-frame-label";
     label.textContent = frameName;
 
+    // Prevent the browser from highlighting label text when shift-clicking
+    // to extend a selection.
+    wrapper.style.userSelect = "none";
+
     wrapper.appendChild(img);
     wrapper.appendChild(label);
 
-    wrapper.addEventListener("click", () => {
-      if (atlasSelectedFrameIndices.has(index)) {
-        atlasSelectedFrameIndices.delete(index);
-        wrapper.classList.remove("selected");
+    wrapper.addEventListener("click", (ev) => {
+      if (
+        ev.shiftKey &&
+        atlasLastClickedFrameIndex !== null &&
+        atlasLastClickedFrameIndex < atlasFrames.length
+      ) {
+        // Shift-click: select every frame between the anchor (last frame
+        // clicked without shift) and the one just clicked, inclusive.
+        const start = Math.min(atlasLastClickedFrameIndex, index);
+        const end = Math.max(atlasLastClickedFrameIndex, index);
+        for (let i = start; i <= end; i++) {
+          atlasSelectedFrameIndices.add(i);
+        }
+        // Reflect the whole range in the DOM; only this wrapper is in scope.
+        cont.querySelectorAll<HTMLElement>(".atlas-frame-wrapper").forEach((el) => {
+          const idx = Number(el.dataset.frameIndex);
+          if (atlasSelectedFrameIndices.has(idx)) el.classList.add("selected");
+        });
       } else {
-        atlasSelectedFrameIndices.add(index);
-        wrapper.classList.add("selected");
+        // Plain click: toggle this frame and make it the new anchor.
+        if (atlasSelectedFrameIndices.has(index)) {
+          atlasSelectedFrameIndices.delete(index);
+          wrapper.classList.remove("selected");
+        } else {
+          atlasSelectedFrameIndices.add(index);
+          wrapper.classList.add("selected");
+        }
+        atlasLastClickedFrameIndex = index;
       }
       refreshAtlasPreviewFrames(false);
       updateSelectAllFramesBtn();
@@ -1360,6 +1389,8 @@ function renderAtlasFrames() {
           from,
           to
         );
+        // Reordering remaps indices, so the shift-click anchor is no longer valid.
+        atlasLastClickedFrameIndex = null;
         atlasOrderDirty = true;
 
         renderAtlasFrames();
@@ -1714,6 +1745,7 @@ async function applyAtlasPreview(
 
   stopAtlasPreview();
   atlasSelectedFrameIndices.clear();
+  atlasLastClickedFrameIndex = null;
 
   await new Promise<void>((resolve) => {
     const atlasImg = new Image();
