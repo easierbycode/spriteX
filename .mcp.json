@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "spritex": {
+      "command": "node",
+      "args": ["mcp/server.mjs"]
+    }
+  }
+}
