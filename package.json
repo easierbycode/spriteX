@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "build:web": "esbuild src/main.ts --bundle --sourcemap --minify --format=esm --platform=browser --outdir=dist/assets --external:https://www.gstatic.com/*",
+    "build:plugin": "node scripts/build-plugin.mjs",
     "copy": "node scripts/copy-static.mjs",
-    "build": "npm run build:web && npm run copy",
+    "build": "npm run build:web && npm run build:plugin && npm run copy",
     "download:atlas": "node scripts/download-atlas.mjs",
     "extract:frames": "node scripts/extract-frames.mjs",
+    "optimize:atlas": "node scripts/optimize-atlas.mjs",
     "test": "node scripts/test-frame-keys.mjs"
   },
   "devDependencies": {
@@ -16,7 +18,9 @@
     "typescript": "^5.5.4"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@napi-rs/canvas": "^0.1.97",
-    "@types/gif.js": "^0.2.5"
+    "@types/gif.js": "^0.2.5",
+    "zod": "^4.4.3"
   }
 }
