@@ -3,6 +3,7 @@ declare const GIF: any;
 import {
   smartDetectSprites,
   extractSpriteDataURLs,
+  drawSpriteRect,
   saveSpritesBatchToRTDB,
   buildAtlas,
   saveAtlas,
@@ -337,7 +338,7 @@ function renderSelectedThumbs() {
 
     const cctx = c.getContext("2d")!;
     cctx.imageSmoothingEnabled = false;
-    cctx.drawImage(originalCanvas, s.x, s.y, s.w, s.h, 0, 0, s.w, s.h);
+    drawSpriteRect(cctx, originalCanvas, s);
 
     const wrap = document.createElement("div");
     wrap.style.display = "inline-flex";
@@ -560,6 +561,66 @@ function dissolveJoinGroup(gid: JoinGroupId) {
   joinGroups.delete(gid);
 }
 
+type Span = [number, number];
+
+/** Merge overlapping/touching spans into sorted, maximal runs. */
+function mergeSpans(spans: Span[]): Span[] {
+  const sorted = spans.slice().sort((a, b) => a[0] - b[0]);
+  const out: Span[] = [];
+  for (const [start, end] of sorted) {
+    const last = out[out.length - 1];
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+    else out.push([start, end]);
+  }
+  return out;
+}
+
+/** Position of a source coordinate once the blank bands between runs collapse. */
+function collapseCoord(coord: number, runs: Span[]): number {
+  let offset = 0;
+  for (const [start, end] of runs) {
+    if (coord < end) return offset + Math.max(0, coord - start);
+    offset += end - start;
+  }
+  return offset;
+}
+
+/**
+ * Combined rect for a join group with the empty gaps between members squeezed
+ * out. Members keep their relative alignment inside each contiguous run of
+ * occupied rows/columns, but the blank bands separating runs collapse to zero
+ * so joined pieces sit flush against each other.
+ */
+function getGroupComposite(members: number[]): DetectedSprite | null {
+  const rects = members
+    .map((idx) => detected[idx])
+    .filter((s): s is DetectedSprite => !!s);
+  if (!rects.length) return null;
+
+  const xRuns = mergeSpans(rects.map((s) => [s.x, s.x + s.w] as Span));
+  const yRuns = mergeSpans(rects.map((s) => [s.y, s.y + s.h] as Span));
+
+  const parts = rects.map((s) => ({
+    sx: s.x,
+    sy: s.y,
+    w: s.w,
+    h: s.h,
+    dx: collapseCoord(s.x, xRuns),
+    dy: collapseCoord(s.y, yRuns),
+  }));
+
+  const w = xRuns.reduce((sum, [start, end]) => sum + (end - start), 0);
+  const h = yRuns.reduce((sum, [start, end]) => sum + (end - start), 0);
+
+  return {
+    x: xRuns[0][0],
+    y: yRuns[0][0],
+    w: Math.max(1, w),
+    h: Math.max(1, h),
+    parts,
+  };
+}
+
 function getGroupBounds(members: number[]): DetectedSprite | null {
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
@@ -630,7 +691,7 @@ function getSelectedRenderUnits(): RenderUnit[] {
       const members = joinGroups.get(gid) || [];
       const selectedMembers = members.filter((m) => selected.has(m));
       if (selectedMembers.length >= 2) {
-        const rect = getGroupBounds(selectedMembers);
+        const rect = getGroupComposite(selectedMembers);
         if (rect) {
           units.push({
             kind: "group",
@@ -1165,13 +1226,6 @@ async function buildAtlasAndPreview() {
   (img as any)._atlasOutputJson = mode === "font"
     ? getFontConfigText(($("atlasNameInput") as HTMLInputElement)?.value || "font_sheet", json)
     : json;
-
-  const trimBtn = $("trimAtlasBtn") as HTMLButtonElement;
-  if (json?.meta?.size?.w === 2048) {
-      trimBtn.style.display = 'inline-block';
-  } else {
-      trimBtn.style.display = 'none';
-  }
 
   $("saveAtlasFirebaseBtn")!.removeAttribute("disabled");
   $("downloadAtlasJsonBtn")!.removeAttribute("disabled");
@@ -1725,19 +1779,20 @@ async function loadAtlasAndPreview() {
 }
 
 async function applyAtlasPreview(
-  dataURL: string,
-  json: any,
+  rawDataURL: string,
+  rawJson: any,
   options?: { selectAllFrames?: boolean; startPreviewNow?: boolean; outputJson?: any }
 ) {
+  // Atlases built elsewhere (older builds, imported sheets) can carry empty
+  // padding on the right; trim it so what is previewed and saved is tight.
+  const { dataURL, json } = await trimAtlasToContent(rawDataURL, rawJson);
+
   const img = $("atlasPreviewImg") as HTMLImageElement;
   img.src = dataURL;
 
   (img as any)._atlasJson = json;
   (img as any)._atlasDataURL = dataURL;
   (img as any)._atlasOutputJson = options?.outputJson ?? json;
-
-  const trimBtn = $("trimAtlasBtn") as HTMLButtonElement;
-  trimBtn.style.display = json?.meta?.size?.w === 2048 ? "inline-block" : "none";
 
   $("saveAtlasFirebaseBtn")!.removeAttribute("disabled");
   $("downloadAtlasJsonBtn")!.removeAttribute("disabled");
@@ -2140,56 +2195,39 @@ async function downloadAtlasPng() {
   triggerDownload(dataURL, filename, "image/png");
 }
 
-async function trimCurrentAtlas() {
-    const img = $("atlasPreviewImg") as HTMLImageElement;
-    const json = (img as any)._atlasJson;
-    const dataURL = (img as any)._atlasDataURL;
+/** Crop the empty right-hand padding off an atlas. Returns the input untouched
+ *  when the sheet is already as wide as its widest frame. */
+async function trimAtlasToContent(
+  dataURL: string,
+  json: any
+): Promise<{ dataURL: string; json: any }> {
+  const actualWidth = getAtlasActualWidth(json);
+  const width = json?.meta?.size?.w;
+  const height = json?.meta?.size?.h;
 
-    if (!json || !dataURL) {
-        alert("No atlas loaded to trim.");
-        return;
-    }
+  if (!dataURL || !actualWidth || !width || !height || actualWidth >= width) {
+    return { dataURL, json };
+  }
 
-    const actualWidth = getAtlasActualWidth(json);
-    const originalWidth = json.meta.size.w;
+  const atlasImage = new Image();
+  const loaded = await new Promise<boolean>((resolve) => {
+    atlasImage.onload = () => resolve(true);
+    atlasImage.onerror = () => resolve(false);
+    atlasImage.src = dataURL;
+  });
+  if (!loaded) return { dataURL, json };
 
-    if (actualWidth === 0 || actualWidth >= originalWidth) {
-        alert("Atlas is already at its optimal width or cannot be trimmed.");
-        return;
-    }
+  const trimmedCanvas = document.createElement("canvas");
+  trimmedCanvas.width = actualWidth;
+  trimmedCanvas.height = height;
+  const trimmedCtx = trimmedCanvas.getContext("2d")!;
+  trimmedCtx.imageSmoothingEnabled = false;
+  trimmedCtx.drawImage(atlasImage, 0, 0);
 
-    const originalHeight = json.meta.size.h;
+  const trimmedJson = JSON.parse(JSON.stringify(json)); // Deep copy
+  trimmedJson.meta.size.w = actualWidth;
 
-    // Create a new canvas with the trimmed width
-    const trimmedCanvas = document.createElement('canvas');
-    trimmedCanvas.width = actualWidth;
-    trimmedCanvas.height = originalHeight;
-    const trimmedCtx = trimmedCanvas.getContext('2d')!;
-
-    // Draw the old atlas image onto the new, smaller canvas
-    const atlasImage = new Image();
-    await new Promise(resolve => {
-        atlasImage.onload = resolve;
-        atlasImage.src = dataURL;
-    });
-    trimmedCtx.drawImage(atlasImage, 0, 0);
-
-    // Get the new data URL
-    const trimmedDataURL = trimmedCanvas.toDataURL('image/png');
-
-    // Update the JSON metadata
-    const newJson = JSON.parse(JSON.stringify(json)); // Deep copy
-    newJson.meta.size.w = actualWidth;
-
-    // Update the UI
-    img.src = trimmedDataURL;
-    (img as any)._atlasJson = newJson;
-    (img as any)._atlasDataURL = trimmedDataURL;
-
-    // Hide the trim button as it's no longer needed
-    ($("trimAtlasBtn") as HTMLButtonElement).style.display = 'none';
-
-    alert(`Atlas trimmed from ${originalWidth}px to ${actualWidth}px wide. You can now save the trimmed version.`);
+  return { dataURL: trimmedCanvas.toDataURL("image/png"), json: trimmedJson };
 }
 
 function setStatusLine(msg: string) {
@@ -2315,11 +2353,6 @@ function wireUI() {
       closeImportAtlasModal(false);
     }
   });
-
-  ($("trimAtlasBtn") as HTMLButtonElement).addEventListener(
-    "click",
-    trimCurrentAtlas
-  );
 
   ($("saveAtlasFirebaseBtn") as HTMLButtonElement).addEventListener(
     "click",

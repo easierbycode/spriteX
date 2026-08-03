@@ -47,11 +47,30 @@ export interface SpriteData {
   png: string; // base64 (may or may not have prefix depending on your DB)
 }
 
+/**
+ * A piece of a composite sprite: a source region copied to a destination
+ * offset inside the sprite's own canvas.
+ */
+export interface SpritePart {
+  sx: number;
+  sy: number;
+  w: number;
+  h: number;
+  dx: number;
+  dy: number;
+}
+
 export interface SpriteRect {
   x: number;
   y: number;
   w: number;
   h: number;
+  /**
+   * When present, the sprite is assembled from these pieces instead of being a
+   * plain crop of the bounding box. Used by joined sprites so the blank space
+   * between the joined pieces is not baked into the frame.
+   */
+  parts?: SpritePart[];
 }
 
 export interface RGB {
@@ -663,7 +682,9 @@ export function createAtlasJson(
       version: "1.0",
       image: "atlas.png",
       format: "RGBA8888",
-      size: { w: packingWidth, h: currentY + rowHeight },
+      // Sized to the packed content, not the packing guide, so the sheet never
+      // carries empty padding on the right.
+      size: { w: actualWidth || packingWidth, h: currentY + rowHeight },
       scale: "1",
     },
   };
@@ -741,6 +762,24 @@ async function measureImage(
 
 /** ===================== Extraction & Saving ===================== */
 
+/**
+ * Paint a sprite rect into `ctx` at the origin, honouring `parts` for
+ * composite (joined) sprites.
+ */
+export function drawSpriteRect(
+  ctx: CanvasRenderingContext2D,
+  source: CanvasImageSource,
+  spr: SpriteRect
+): void {
+  if (spr.parts?.length) {
+    for (const p of spr.parts) {
+      ctx.drawImage(source, p.sx, p.sy, p.w, p.h, p.dx, p.dy, p.w, p.h);
+    }
+    return;
+  }
+  ctx.drawImage(source, spr.x, spr.y, spr.w, spr.h, 0, 0, spr.w, spr.h);
+}
+
 export function extractSpriteDataURLs(
   originalCanvas: HTMLCanvasElement,
   boxes: SpriteRect[],
@@ -753,17 +792,7 @@ export function extractSpriteDataURLs(
     c.height = spr.h;
     const cctx = c.getContext("2d", { willReadFrequently: true })!;
     cctx.imageSmoothingEnabled = false;
-    cctx.drawImage(
-      originalCanvas,
-      spr.x,
-      spr.y,
-      spr.w,
-      spr.h,
-      0,
-      0,
-      spr.w,
-      spr.h
-    );
+    drawSpriteRect(cctx, originalCanvas, spr);
 
     if (opts?.bgColor) {
       const id = cctx.getImageData(0, 0, spr.w, spr.h);
