@@ -199,7 +199,7 @@ export interface TiledMapData {
 
 /** RTDB keys cannot contain . # $ / [ ] */
 export function sanitizeMapKey(key: string): string {
-  return key.replace(/[.#$/\[\]]/g, "-");
+  return key.trim().replace(/[.#$/\[\]]/g, "-");
 }
 
 /**
@@ -214,8 +214,12 @@ export async function saveMap(
   data: TiledMapData
 ): Promise<void> {
   const db = getDB();
+  // An empty key would address `maps/` itself, and set() would then replace the
+  // whole collection with this one record — wiping every other map.
+  const safeKey = sanitizeMapKey(mapKey);
+  if (!safeKey) throw new Error("Map name is empty after sanitizing.");
   try {
-    await set(ref(db, `maps/${sanitizeMapKey(mapKey)}`), {
+    await set(ref(db, `maps/${safeKey}`), {
       json: typeof data.json === "string" ? data.json : JSON.stringify(data.json),
       png: data.png,
     });
