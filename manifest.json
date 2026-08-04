@@ -13,7 +13,8 @@
       "sizes": "512x512"
     }
   ],
-  "start_url": ".",
+  "start_url": "/spriteX/",
+  "scope": "/spriteX/",
   "display": "standalone",
   "theme_color": "#107C10",
   "background_color": "#f5f6f8",
