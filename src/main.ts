@@ -17,6 +17,7 @@ import {
   hexToRgb,
   getAtlasActualWidth,
   decodeAtlasFrameKey,
+  encodeAtlasFrameKey,
   type DetectedSprite,
   type RGB,
   type SpriteData,
@@ -60,6 +61,10 @@ let atlasAnimPlaying = false;
 let atlasReorderEnabled = false;
 let atlasOrderDirty = false;
 let atlasSyncPromise: Promise<void> | null = null;
+// Bumped on every mutation of the frame arrays (duplicate, reorder, load). An
+// in-flight order sync compares against its starting value and discards its
+// result instead of clobbering state that changed under it.
+let atlasStateGen = 0;
 let importAtlasJsonFile: File | null = null;
 let importAtlasPngFile: File | null = null;
 
@@ -1243,6 +1248,7 @@ async function buildAtlasAndPreview() {
       atlasFrames = result.frames;
       atlasFrameNames = result.names;
       atlasFrameRects = result.rects;
+      atlasStateGen++;
       atlasOrderDirty = false;
       renderAtlasFrames();
       resolve();
@@ -1309,12 +1315,33 @@ function scheduleAtlasOrderSync() {
       return;
     }
 
+    const gen = atlasStateGen;
+
+    // Key the rebuild map by ENCODED names: k_-prefixed keys are never
+    // integer-like, so plain-object insertion order (= animation order)
+    // survives frames whose real names are digits. Dedup on decoded names,
+    // skipping suffixes that would collide with another frame's real name.
+    const decodedNames = atlasFrames.map((_, i) =>
+      decodeAtlasFrameKey(atlasFrameNames[i] || `atlas_s${i}`)
+    );
+    const allNames = new Set(decodedNames);
+    const usedNames = new Set<string>();
     const named: Record<string, string> = {};
     atlasFrames.forEach((frameData, i) => {
-      named[atlasFrameNames[i] || `atlas_s${i}`] = frameData;
+      const base = decodedNames[i];
+      let name = base;
+      for (let n = 2; usedNames.has(name) || (name !== base && allNames.has(name)); n++) {
+        name = `${base}_${n}`;
+      }
+      usedNames.add(name);
+      named[encodeAtlasFrameKey(name)] = frameData;
     });
 
     const { dataURL, json } = await buildAtlas(named);
+    // A duplicate/reorder/load landed while the sheet was rebuilding; discard
+    // this stale rebuild and leave the dirty flag for the next round.
+    if (gen !== atlasStateGen) return;
+
     const img = $("atlasPreviewImg") as HTMLImageElement;
     const mode = getBuilderMode();
 
@@ -1325,12 +1352,48 @@ function scheduleAtlasOrderSync() {
       ? getFontConfigText(($("atlasNameInput") as HTMLInputElement)?.value || "font_sheet", json)
       : json;
 
+    // Re-slice frames from the rebuilt sheet: duplication changes the frame
+    // count, so the old rects no longer line up with the new packing.
+    await new Promise<void>((resolve) => {
+      const atlasImg = new Image();
+      atlasImg.onload = async () => {
+        const result = await extractFramesFromAtlas(atlasImg, json);
+        if (gen !== atlasStateGen) {
+          resolve();
+          return;
+        }
+        atlasFrames = result.frames;
+        atlasFrameNames = result.names;
+        atlasFrameRects = result.rects;
+        atlasSelectedFrameIndices = new Set(
+          [...atlasSelectedFrameIndices].filter((idx) => idx < atlasFrames.length)
+        );
+        renderAtlasFrames();
+        resolve();
+      };
+      atlasImg.onerror = () => {
+        console.error("Failed to reload rebuilt atlas for frame rects");
+        resolve();
+      };
+      atlasImg.src = dataURL;
+    });
+
+    if (gen !== atlasStateGen) return;
     atlasOrderDirty = false;
   })().finally(() => {
     atlasSyncPromise = null;
   });
 
   return atlasSyncPromise;
+}
+
+/** Settle the frame order fully: a mutation that lands mid-sync leaves the
+ *  dirty flag set, so keep running rounds until the state is clean. */
+async function ensureAtlasOrderSynced() {
+  while (atlasSyncPromise || atlasOrderDirty) {
+    if (atlasSyncPromise) await atlasSyncPromise;
+    else await scheduleAtlasOrderSync();
+  }
 }
 
 function renderAtlasFrames() {
@@ -1445,6 +1508,7 @@ function renderAtlasFrames() {
         );
         // Reordering remaps indices, so the shift-click anchor is no longer valid.
         atlasLastClickedFrameIndex = null;
+        atlasStateGen++;
         atlasOrderDirty = true;
 
         renderAtlasFrames();
@@ -1466,6 +1530,56 @@ function updateSelectAllFramesBtn() {
   const allSelected = total > 0 && atlasSelectedFrameIndices.size === total;
   btn.textContent = allSelected ? "SELECT NONE" : "SELECT ALL";
   btn.setAttribute("aria-pressed", String(allSelected));
+
+  const dupBtn = $("duplicateFramesBtn") as HTMLButtonElement | null;
+  if (dupBtn) dupBtn.disabled = atlasSelectedFrameIndices.size === 0;
+}
+
+function duplicateSelectedAtlasFrames() {
+  if (!atlasFrames.length || !atlasSelectedFrameIndices.size) {
+    setStatusLine("SELECT FRAME(S) TO DUPLICATE");
+    return;
+  }
+
+  const takenNames = new Set(atlasFrameNames.map((n) => decodeAtlasFrameKey(n)));
+  const nextFrames: string[] = [];
+  const nextNames: string[] = [];
+  const nextRects: DetectedSprite[] = [];
+  const nextSelected = new Set<number>();
+
+  atlasFrames.forEach((frameData, i) => {
+    nextFrames.push(frameData);
+    nextNames.push(atlasFrameNames[i]);
+    nextRects.push(atlasFrameRects[i]);
+    if (!atlasSelectedFrameIndices.has(i)) return;
+
+    // Keep the source selected and insert its copy right after, so the pair
+    // plays back-to-back in the animation preview / GIF.
+    nextSelected.add(nextFrames.length - 1);
+
+    const base = decodeAtlasFrameKey(atlasFrameNames[i] || `frame_${i}`);
+    let copyName = `${base}_copy`;
+    for (let n = 2; takenNames.has(copyName); n++) copyName = `${base}_copy${n}`;
+    takenNames.add(copyName);
+
+    nextFrames.push(frameData);
+    nextNames.push(copyName);
+    // Copies show the same pixels of the current sheet until the next rebuild.
+    nextRects.push(atlasFrameRects[i] ? { ...atlasFrameRects[i] } : atlasFrameRects[i]);
+    nextSelected.add(nextFrames.length - 1);
+  });
+
+  atlasFrames = nextFrames;
+  atlasFrameNames = nextNames;
+  atlasFrameRects = nextRects;
+  atlasSelectedFrameIndices = nextSelected;
+  // Duplication remaps indices, so the shift-click anchor is no longer valid.
+  atlasLastClickedFrameIndex = null;
+  atlasStateGen++;
+  atlasOrderDirty = true;
+
+  renderAtlasFrames();
+  refreshAtlasPreviewFrames(false);
 }
 
 function toggleSelectAllFrames() {
@@ -1484,12 +1598,7 @@ async function saveAtlasToFirebase() {
   const nameInput = $("atlasNameInput") as HTMLInputElement;
   const atlasName = (nameInput?.value || "untitled_atlas").trim();
 
-  if (atlasSyncPromise) {
-    await atlasSyncPromise;
-  }
-  if (atlasOrderDirty) {
-    await scheduleAtlasOrderSync();
-  }
+  await ensureAtlasOrderSynced();
 
   const img = $("atlasPreviewImg") as HTMLImageElement;
   const json = (img as any)._atlasJson;
@@ -1809,6 +1918,7 @@ async function applyAtlasPreview(
       atlasFrames = result.frames;
       atlasFrameNames = result.names;
       atlasFrameRects = result.rects;
+      atlasStateGen++;
       atlasOrderDirty = false;
       if (options?.selectAllFrames) {
         atlasSelectedFrameIndices = new Set(atlasFrames.map((_, i) => i));
@@ -2143,12 +2253,7 @@ async function downloadCharacterPng() {
 }
 
 async function downloadAtlasJson() {
-  if (atlasSyncPromise) {
-    await atlasSyncPromise;
-  }
-  if (atlasOrderDirty) {
-    await scheduleAtlasOrderSync();
-  }
+  await ensureAtlasOrderSynced();
 
   const img = $("atlasPreviewImg") as HTMLImageElement;
   const json = (img as any)._atlasJson;
@@ -2172,12 +2277,7 @@ async function downloadAtlasJson() {
 }
 
 async function downloadAtlasPng() {
-  if (atlasSyncPromise) {
-    await atlasSyncPromise;
-  }
-  if (atlasOrderDirty) {
-    await scheduleAtlasOrderSync();
-  }
+  await ensureAtlasOrderSynced();
 
   const img = $("atlasPreviewImg") as HTMLImageElement;
   const dataURL = (img as any)._atlasDataURL;
@@ -2397,9 +2497,16 @@ function wireUI() {
   // Task 1: select all / none toggle for atlas frames in the View tab.
   $("selectAllFramesBtn")?.addEventListener("click", toggleSelectAllFrames);
 
+  // Duplicate the selected frames in place (copies insert after their sources).
+  $("duplicateFramesBtn")?.addEventListener("click", duplicateSelectedAtlasFrames);
+
   // Task 3: send the frames selected in View straight to the Extract tab as
   // detected sprites, skipping re-detection.
   $("viewExtractBtn")?.addEventListener("click", async () => {
+    // A rebuild kicked off by save/download may be mid-flight; settle it fully
+    // so the data URL and frame rects we read below belong to the same sheet.
+    if (atlasSyncPromise) await ensureAtlasOrderSynced();
+
     const previewImg = $("atlasPreviewImg") as HTMLImageElement;
     const dataURL = (previewImg as any)._atlasDataURL || previewImg.src || "";
     if (!dataURL.startsWith("data:")) {

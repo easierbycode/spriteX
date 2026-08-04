@@ -296,7 +296,10 @@ function ensureDataURL(s: string): string {
 }
 
 /** Firebase RTDB keys cannot contain . # $ / [ ] */
-function encodeAtlasFrameKey(name: string): string {
+export function encodeAtlasFrameKey(name: string): string {
+  // Idempotent: a name that already decodes as a k_-hex key is passed through
+  // untouched, so rebuilding an atlas never stacks a second encoding layer.
+  if (decodeAtlasFrameKey(name) !== name) return name;
   // Encode UTF-16 code units, not code points: decoders slice the hex in fixed
   // 4-digit chunks, and astral chars (emoji) would emit 5-digit groups that
   // break the round-trip. Surrogate pairs become two 4-digit groups instead.
