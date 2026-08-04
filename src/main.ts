@@ -7,6 +7,8 @@ import {
   saveSpritesBatchToRTDB,
   buildAtlas,
   saveAtlas,
+  saveMap,
+  sanitizeMapKey,
   loadCharacterPreviewFromAtlas,
   fetchAllCharacters,
   fetchAllAtlases,
@@ -1235,6 +1237,8 @@ async function buildAtlasAndPreview() {
   $("saveAtlasFirebaseBtn")!.removeAttribute("disabled");
   $("downloadAtlasJsonBtn")!.removeAttribute("disabled");
   $("downloadAtlasPngBtn")!.removeAttribute("disabled");
+  $("downloadAtlasTmxBtn")?.removeAttribute("disabled");
+  $("downloadAtlasAllBtn")?.removeAttribute("disabled");
 
   // --- New logic for atlas frame preview ---
   stopAtlasPreview();
@@ -1906,6 +1910,8 @@ async function applyAtlasPreview(
   $("saveAtlasFirebaseBtn")!.removeAttribute("disabled");
   $("downloadAtlasJsonBtn")!.removeAttribute("disabled");
   $("downloadAtlasPngBtn")!.removeAttribute("disabled");
+  $("downloadAtlasTmxBtn")?.removeAttribute("disabled");
+  $("downloadAtlasAllBtn")?.removeAttribute("disabled");
 
   stopAtlasPreview();
   atlasSelectedFrameIndices.clear();
@@ -2013,10 +2019,17 @@ async function importAtlasFromSelectedFiles() {
     ]);
     const json = JSON.parse(jsonText);
 
+    // Tiled tilemap JSON (layers/tilesets, no frames object) — import it as
+    // a map record next to the atlases instead of rejecting it
+    if (isTiledMapJson(json)) {
+      await importTilemapFromSelectedFiles(json, dataURL);
+      return;
+    }
+
     const hasFrames = json?.frames && typeof json.frames === "object";
     const hasTextures = Array.isArray(json?.textures) && json.textures[0]?.frames && typeof json.textures[0].frames === "object";
     if (!hasFrames && !hasTextures) {
-      alert("Invalid atlas JSON. Missing frames object.");
+      alert("Invalid atlas JSON. Missing frames object (and not a Tiled map).");
       return;
     }
 
@@ -2040,6 +2053,86 @@ async function importAtlasFromSelectedFiles() {
     console.error(err);
     alert(`Failed to import atlas: ${err?.message || "Unknown error"}`);
   }
+}
+
+function isTiledMapJson(json: any): boolean {
+  return (
+    json?.type === "map" ||
+    (Array.isArray(json?.layers) && Array.isArray(json?.tilesets))
+  );
+}
+
+/**
+ * Import a Tiled map + tileset PNG picked in the atlas-import modal.
+ * Stored at maps/<key> = { json, png } in the RTDB, alongside the atlases —
+ * mario-sp (and friends) load these at runtime and the in-game level editor
+ * writes its saves to the same records.
+ */
+/** Group layers nest their children, so a compressed tile layer can sit any
+ *  depth down. Mirrors the recursive walk the TILEMAP tab loader does. */
+function findCompressedLayer(layers: any): any {
+  if (!Array.isArray(layers)) return null;
+  for (const l of layers) {
+    if (l?.compression) return l;
+    const nested = findCompressedLayer(l?.layers);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+async function importTilemapFromSelectedFiles(json: any, dataURL: string) {
+  // only embedded-tileset, uncompressed maps are playable by the games
+  const tilesets: any[] = Array.isArray(json.tilesets) ? json.tilesets : [];
+  if (tilesets.some((t: any) => t.source)) {
+    alert(
+      "This Tiled map references an external tileset (.tsx). " +
+        "In Tiled use Map > Embed Tilesets, re-export, and import again."
+    );
+    return;
+  }
+  // The record carries exactly one PNG, so GIDs from a second tileset image
+  // would have nothing to render against.
+  const tilesetImages = new Set(
+    tilesets.map((t: any) => t.image).filter((img: any) => typeof img === "string")
+  );
+  if (tilesetImages.size > 1) {
+    alert(
+      `This map uses ${tilesetImages.size} tileset images ` +
+        `(${[...tilesetImages].join(", ")}), but a map record stores only one. ` +
+        "In Tiled merge them into a single tileset and re-export."
+    );
+    return;
+  }
+  const compressed = findCompressedLayer(json.layers);
+  if (compressed) {
+    alert(
+      `Layer "${compressed.name || "?"}" uses compressed tile data ` +
+        `(${compressed.compression}). Re-export with ` +
+        "Tile Layer Format = CSV or Base64 (uncompressed)."
+    );
+    return;
+  }
+
+  const suggested = sanitizeMapKey(
+    importAtlasJsonFile!.name.replace(/\.json$/i, "")
+  );
+  const entered = window.prompt("Import Tiled map to RTDB as maps/<name>:", suggested);
+  if (entered === null) return; // cancelled
+  // Both sides can sanitize to nothing (a file literally named ".json", a name
+  // of only forbidden chars) — never let that reach saveMap as `maps/`.
+  const key = sanitizeMapKey(entered) || suggested;
+  if (!key) {
+    alert("Enter a name for the map.");
+    return;
+  }
+
+  const layerCount = Array.isArray(json.layers) ? json.layers.length : 0;
+  await saveMap(key, { json, png: dataURL });
+  alert(
+    `Tiled map "${key}" saved to RTDB (maps/${key}) — ` +
+      `${json.width}x${json.height} tiles, ${layerCount} layer(s).`
+  );
+  closeImportAtlasModal(true);
 }
 
 async function loadCharacterAndPreview() {
@@ -2089,26 +2182,47 @@ async function loadCharacterAndPreview() {
  * @param filename The desired name of the file.
  * @param mimeType The MIME type of the file.
  */
-async function triggerDownload(url: string, filename: string, mimeType: string) {
+interface DownloadItem {
+  url: string;
+  filename: string;
+  mimeType: string;
+}
+
+/** In Android standalone mode (TWA/APK), <a download> with data URLs fails,
+ *  so the Web Share API is used to let the user save the file instead. */
+function isAndroidStandalone(): boolean {
+  return /Android/i.test(navigator.userAgent) &&
+    (window.matchMedia("(display-mode: standalone)").matches ||
+     window.matchMedia("(display-mode: fullscreen)").matches);
+}
+
+/**
+ * Save one or more files. Multiple files go out in a *single* Web Share:
+ * navigator.share() needs transient user activation, which the first share
+ * consumes, so successive shares from one click would be rejected and fall
+ * back to the anchor path that does not work here.
+ */
+async function triggerDownloadMany(items: DownloadItem[]) {
+  if (!items.length) return;
+
   // Check for a native Android interface
   if ((window as any).Android?.downloadFile) {
-    (window as any).Android.downloadFile(url, filename, mimeType);
+    for (const it of items) {
+      (window as any).Android.downloadFile(it.url, it.filename, it.mimeType);
+    }
     return;
   }
 
-  // In Android standalone mode (TWA/APK), <a download> with data URLs fails.
-  // Use the Web Share API to let the user save the file.
-  const isAndroidStandalone = /Android/i.test(navigator.userAgent) &&
-    (window.matchMedia("(display-mode: standalone)").matches ||
-     window.matchMedia("(display-mode: fullscreen)").matches);
-
-  if (isAndroidStandalone && navigator.canShare) {
+  if (isAndroidStandalone() && navigator.canShare) {
     try {
-      const response = await fetch(url);
-      const blob = await response.blob();
-      const file = new File([blob], filename, { type: mimeType });
-      if (navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file] });
+      const files = await Promise.all(
+        items.map(async (it) => {
+          const blob = await (await fetch(it.url)).blob();
+          return new File([blob], it.filename, { type: it.mimeType });
+        })
+      );
+      if (navigator.canShare({ files })) {
+        await navigator.share({ files });
         return;
       }
     } catch (e) {
@@ -2120,12 +2234,18 @@ async function triggerDownload(url: string, filename: string, mimeType: string) 
   }
 
   // Fallback for standard web browsers
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  for (const it of items) {
+    const a = document.createElement("a");
+    a.href = it.url;
+    a.download = it.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+}
+
+async function triggerDownload(url: string, filename: string, mimeType: string) {
+  await triggerDownloadMany([{ url, filename, mimeType }]);
 }
 
 /**
@@ -2136,8 +2256,11 @@ async function triggerDownload(url: string, filename: string, mimeType: string) 
  * @param type The MIME type of the file.
  */
 function downloadFile(filename: string, content: string, type: string) {
-  const url = `data:${type};charset=utf-8,${encodeURIComponent(content)}`;
-  triggerDownload(url, filename, type);
+  return triggerDownload(dataUrlFor(content, type), filename, type);
+}
+
+function dataUrlFor(content: string, type: string): string {
+  return `data:${type};charset=utf-8,${encodeURIComponent(content)}`;
 }
 
 /**
@@ -2252,47 +2375,214 @@ async function downloadCharacterPng() {
   triggerDownload(dataURL, filename, "image/png");
 }
 
-async function downloadAtlasJson() {
-  await ensureAtlasOrderSynced();
-
-  const img = $("atlasPreviewImg") as HTMLImageElement;
-  const json = (img as any)._atlasJson;
-
-  if (!json) {
-    alert("Build or load an atlas first.");
-    return;
-  }
-
+function currentAtlasName(): string {
   const nameInput = $("atlasNameInput") as HTMLInputElement;
   const select = $("atlasSelect") as HTMLSelectElement;
-  const atlasName = (nameInput?.value.trim()) || (select?.value) || "atlas";
-  const filename = `${atlasName}.json`;
+  return (nameInput?.value.trim()) || (select?.value) || "atlas";
+}
+
+/** Null when no atlas is loaded. Callers that a user triggered directly do the
+ *  alerting; the ALL export collects whatever is available. */
+function atlasJsonItem(): DownloadItem | null {
+  const img = $("atlasPreviewImg") as HTMLImageElement;
+  const json = (img as any)._atlasJson;
+  if (!json) return null;
+
   const outputJson = (img as any)._atlasOutputJson ?? json;
   const content =
     typeof outputJson === "string"
       ? outputJson
       : JSON.stringify(outputJson, null, 2);
+  const mimeType = "application/json";
 
-  downloadFile(filename, content, "application/json");
+  return {
+    url: dataUrlFor(content, mimeType),
+    filename: `${currentAtlasName()}.json`,
+    mimeType,
+  };
+}
+
+function atlasPngItem(): DownloadItem | null {
+  const img = $("atlasPreviewImg") as HTMLImageElement;
+  const dataURL = (img as any)._atlasDataURL;
+  if (!dataURL) return null;
+
+  return {
+    url: dataURL,
+    filename: `${currentAtlasName()}.png`,
+    mimeType: "image/png",
+  };
+}
+
+async function downloadAtlasJson() {
+  await ensureAtlasOrderSynced();
+
+  const item = atlasJsonItem();
+  if (!item) {
+    alert("Build or load an atlas first.");
+    return;
+  }
+  await triggerDownloadMany([item]);
 }
 
 async function downloadAtlasPng() {
   await ensureAtlasOrderSynced();
 
-  const img = $("atlasPreviewImg") as HTMLImageElement;
-  const dataURL = (img as any)._atlasDataURL;
+  const item = atlasPngItem();
+  if (!item) {
+    alert("Build or load an atlas first.");
+    return;
+  }
+  await triggerDownloadMany([item]);
+}
 
-  if (!dataURL) {
+function getAtlasFrameRects(json: any): { x: number; y: number; w: number; h: number }[] {
+  const frameData = json?.frames || json?.textures?.[0]?.frames || {};
+  const rects: { x: number; y: number; w: number; h: number }[] = [];
+  for (const key in frameData) {
+    const frame = frameData[key]?.frame;
+    if (!frame || typeof frame.w !== "number" || typeof frame.h !== "number") {
+      continue;
+    }
+    rects.push({ x: frame.x || 0, y: frame.y || 0, w: frame.w, h: frame.h });
+  }
+  return rects;
+}
+
+/**
+ * Builds a Tiled .tmx map from the loaded atlas, mirroring exportTiledFormat()
+ * from easierbycode.github.io/tileset-extractor: the atlas PNG is the tileset
+ * image and a single layer lays the tiles out in grid order (gid 0 = cells not
+ * covered by any frame). Requires a uniform, grid-aligned tile atlas.
+ */
+function buildAtlasTmx(json: any, atlasName: string, imageW: number, imageH: number): string {
+  const rects = getAtlasFrameRects(json);
+  if (!rects.length) throw new Error("Atlas JSON has no frames.");
+
+  const tileWidth = rects[0].w;
+  const tileHeight = rects[0].h;
+  if (rects.some((r) => r.w !== tileWidth || r.h !== tileHeight)) {
+    throw new Error("Atlas frames are not a uniform size — a tile map needs one tile size.");
+  }
+  if (!imageW || !imageH) throw new Error("Unknown atlas image size.");
+
+  const numCols = imageW / tileWidth;
+  const numRows = imageH / tileHeight;
+  if (numCols !== Math.floor(numCols) || !numCols) {
+    throw new Error(`Image width (${imageW}px) is not dividable by tile width (${tileWidth}px).`);
+  }
+  if (numRows !== Math.floor(numRows) || !numRows) {
+    throw new Error(`Image height (${imageH}px) is not dividable by tile height (${tileHeight}px).`);
+  }
+
+  const coveredCells = new Set<number>();
+  for (const r of rects) {
+    if (r.x % tileWidth !== 0 || r.y % tileHeight !== 0) {
+      throw new Error("Atlas frames are not aligned to the tile grid.");
+    }
+    coveredCells.add((r.y / tileHeight) * numCols + r.x / tileWidth);
+  }
+
+  const doc = document.implementation.createDocument(null, "map", null);
+  const xmlMap = doc.documentElement;
+  xmlMap.setAttribute("version", "1.0");
+  xmlMap.setAttribute("orientation", "orthogonal");
+  xmlMap.setAttribute("renderorder", "right-down");
+  xmlMap.setAttribute("width", String(numCols));
+  xmlMap.setAttribute("height", String(numRows));
+  xmlMap.setAttribute("tilewidth", String(tileWidth));
+  xmlMap.setAttribute("tileheight", String(tileHeight));
+  xmlMap.setAttribute("nextobjectid", "1");
+
+  const xmlTileSet = doc.createElement("tileset");
+  xmlTileSet.setAttribute("firstgid", "1");
+  xmlTileSet.setAttribute("name", atlasName);
+  xmlTileSet.setAttribute("tilewidth", String(tileWidth));
+  xmlTileSet.setAttribute("tileheight", String(tileHeight));
+  const xmlImage = doc.createElement("image");
+  xmlImage.setAttribute("source", `${atlasName}.png`);
+  xmlImage.setAttribute("width", String(imageW));
+  xmlImage.setAttribute("height", String(imageH));
+  xmlTileSet.appendChild(xmlImage);
+  xmlMap.appendChild(xmlTileSet);
+
+  const xmlLayer = doc.createElement("layer");
+  xmlLayer.setAttribute("name", "layer");
+  xmlLayer.setAttribute("width", String(numCols));
+  xmlLayer.setAttribute("height", String(numRows));
+  const xmlData = doc.createElement("data");
+  for (let i = 0, n = numCols * numRows; i < n; ++i) {
+    const xmlTile = doc.createElement("tile");
+    xmlTile.setAttribute("gid", String(coveredCells.has(i) ? i + 1 : 0));
+    xmlData.appendChild(xmlTile);
+  }
+  xmlLayer.appendChild(xmlData);
+  xmlMap.appendChild(xmlLayer);
+
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(xmlMap);
+}
+
+/** Throws with the reason the atlas cannot become a tile map. */
+function atlasTmxItem(): DownloadItem | null {
+  const img = $("atlasPreviewImg") as HTMLImageElement;
+  const json = (img as any)._atlasJson;
+  if (!json) return null;
+
+  const atlasName = currentAtlasName();
+  // Prefer the real PNG dimensions — meta.size can be stale (e.g. untrimmed 2048)
+  // and the .tmx must describe the PNG file that gets downloaded alongside it.
+  const imageW = img.naturalWidth || json?.meta?.size?.w || json?.textures?.[0]?.size?.w;
+  const imageH = img.naturalHeight || json?.meta?.size?.h || json?.textures?.[0]?.size?.h;
+  const mimeType = "text/xml";
+
+  return {
+    url: dataUrlFor(buildAtlasTmx(json, atlasName, imageW, imageH), mimeType),
+    filename: `${atlasName}.tmx`,
+    mimeType,
+  };
+}
+
+async function downloadAtlasTmx() {
+  await ensureAtlasOrderSynced();
+
+  let item: DownloadItem | null;
+  try {
+    item = atlasTmxItem();
+  } catch (err: any) {
+    alert(`TMX export failed: ${err?.message || err}`);
+    return;
+  }
+  if (!item) {
+    alert("Build or load an atlas first.");
+    return;
+  }
+  await triggerDownloadMany([item]);
+}
+
+async function downloadAtlasAll() {
+  await ensureAtlasOrderSynced();
+
+  const png = atlasPngItem();
+  const json = atlasJsonItem();
+  if (!png || !json) {
     alert("Build or load an atlas first.");
     return;
   }
 
-  const nameInput = $("atlasNameInput") as HTMLInputElement;
-  const select = $("atlasSelect") as HTMLSelectElement;
-  const atlasName = (nameInput?.value.trim()) || (select?.value) || "atlas";
-  const filename = `${atlasName}.png`;
+  // A non-grid atlas still exports fine as PNG + JSON — take the TMX if we can
+  // get it and report the reason if we cannot.
+  let tmx: DownloadItem | null = null;
+  let tmxError = "";
+  try {
+    tmx = atlasTmxItem();
+  } catch (err: any) {
+    tmxError = err?.message || String(err);
+  }
 
-  triggerDownload(dataURL, filename, "image/png");
+  // One call, so the Android standalone path shares all three files together —
+  // it only gets one user activation to spend.
+  await triggerDownloadMany([png, json, ...(tmx ? [tmx] : [])]);
+  if (tmxError) alert(`TMX export failed: ${tmxError}`);
 }
 
 /** Crop the empty right-hand padding off an atlas. Returns the input untouched
@@ -2482,6 +2772,16 @@ function wireUI() {
   ($("downloadAtlasPngBtn") as HTMLButtonElement).addEventListener(
     "click",
     downloadAtlasPng
+  );
+
+  ($("downloadAtlasTmxBtn") as HTMLButtonElement | null)?.addEventListener(
+    "click",
+    downloadAtlasTmx
+  );
+
+  ($("downloadAtlasAllBtn") as HTMLButtonElement | null)?.addEventListener(
+    "click",
+    downloadAtlasAll
   );
 
   ($("atlasSelect") as HTMLSelectElement).addEventListener(
@@ -2784,6 +3084,96 @@ function setupPWA() {
   });
 }
 
+// ============ CMG Sprite Picker preload bridge ==========
+// The CMG launcher (github.com/easierbycode/cmg, tools/sprite-picker-extension)
+// can boot SpriteX with sprites picked from any sprite-sheet site. The payload
+// arrives as a window message from the embedding launcher frame (or an opener):
+//   { type: "spritex-preload", sprites: [{ name, dataURL }, ...] }
+// The sprites are packed with the existing atlas builder and shown in the View
+// tab exactly as if an RTDB atlas had been selected, and the sender is answered
+// with { type: "spritex-preload-ack", count } so it can stop re-posting.
+
+const PRELOAD_MAX_SPRITES = 64;
+
+function sanitizePreloadSprites(
+  raw: unknown
+): { name: string; dataURL: string }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { name: string; dataURL: string }[] = [];
+  const seen = new Set<string>();
+  for (const s of raw.slice(0, PRELOAD_MAX_SPRITES)) {
+    const dataURL = typeof (s as any)?.dataURL === "string"
+      ? (s as any).dataURL
+      : "";
+    if (!/^data:image\/(png|webp|gif|jpe?g);base64,/.test(dataURL)) continue;
+    let name = typeof (s as any)?.name === "string" ? (s as any).name : "";
+    name = name.replace(/[^\w-]/g, "").slice(0, 48) || `sprite_${out.length}`;
+    while (seen.has(name)) name += "_";
+    seen.add(name);
+    out.push({ name, dataURL });
+  }
+  return out;
+}
+
+async function preloadSpritesIntoView(
+  sprites: { name: string; dataURL: string }[]
+) {
+  const named: Record<string, string> = {};
+  sprites.forEach((s, i) => {
+    named[s.name || `sprite_${i}`] = s.dataURL;
+  });
+  const { dataURL, json } = await buildAtlas(named);
+  await applyAtlasPreview(dataURL, json, {
+    selectAllFrames: true,
+    startPreviewNow: true,
+  });
+  // Tab switching lives in an inline IIFE in index.html (show() is closure
+  // private), so drive it through the buttons like a user would.
+  (document.querySelector(
+    '.sx-tab[data-sx-tab="view"]'
+  ) as HTMLButtonElement | null)?.click();
+  (document.getElementById("viewModeAtlasBtn") as HTMLButtonElement | null)
+    ?.click();
+  const status = document.getElementById("sxStatusLine");
+  if (status) {
+    status.textContent = `VIEW · ${sprites.length} SPRITE${
+      sprites.length === 1 ? "" : "S"
+    } FROM SPRITE PICKER`;
+  }
+}
+
+let preloadBusy = false;
+
+function setupPreloadBridge() {
+  window.addEventListener("message", (ev: MessageEvent) => {
+    const d = ev.data;
+    if (!d || d.type !== "spritex-preload") return;
+    const sprites = sanitizePreloadSprites(d.sprites);
+    if (!sprites.length || preloadBusy) return;
+    preloadBusy = true;
+    const src = ev.source as Window | null;
+    preloadSpritesIntoView(sprites)
+      .then(() => {
+        try {
+          src?.postMessage(
+            { type: "spritex-preload-ack", count: sprites.length },
+            "*"
+          );
+        } catch (_e) { /* sender gone — nothing to ack */ }
+      })
+      .catch((err) => console.error("spritex-preload failed:", err))
+      .finally(() => {
+        preloadBusy = false;
+      });
+  });
+  // Tell an embedding launcher we can receive sprites now.
+  const host = window.opener ||
+    (window.parent !== window ? window.parent : null);
+  try {
+    host?.postMessage({ type: "spritex-ready" }, "*");
+  } catch (_e) { /* not embedded */ }
+}
+
 async function populateSpritePreviewDropdownFromDB() {
     const select = $("spritePreviewSelect") as HTMLSelectElement;
     if (!select) return;
@@ -2832,6 +3222,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   initTilemapEditor({ downloadFile, setStatus: setStatusLine });
   initTilemapGameBridge();
   initGamepad({ setStatus: setStatusLine });
+  // Before the RTDB awaits: preload must work even when Firebase is slow/down.
+  setupPreloadBridge();
   await populateCharacterSelect();
   await populateAtlasSelect();
   await populateSpritePreviewDropdownFromDB();
