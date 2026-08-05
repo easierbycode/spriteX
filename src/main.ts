@@ -83,6 +83,62 @@ let erasePickHoverHex: string | null = null;
 // Canvas view state
 let canvasZoom = 1;
 
+// Grid slicing state. While grid mode is on, `detected` holds the grid cells
+// (enumerated row-major) and the normal selection pipeline operates on them.
+type GridParams = {
+  cellW: number;
+  cellH: number;
+  gapX: number; // spacing between cells
+  gapY: number;
+  offX: number; // margin / grid origin offset
+  offY: number;
+};
+let gridActive = false;
+let gridParams: GridParams = { cellW: 16, cellH: 16, gapX: 0, gapY: 0, offX: 0, offY: 0 };
+let gridCols = 0;
+let gridRows = 0;
+let gridLayerCanvas: HTMLCanvasElement | null = null; // cached dim + cell-outline layer
+let gridHoverIndex = -1;
+let gridAnchorIndex: number | null = null; // anchor for shift+click run selection
+let gridTool: "select" | "move" = "select";
+// Auto-detect results stashed while grid mode is on, restored on exit.
+let preGridState: {
+  detected: DetectedSprite[];
+  selected: Set<number>;
+  splits: Map<number, SpriteSplitChoice>;
+  joins: Map<JoinGroupId, number[]>;
+} | null = null;
+// Snapshot of grid geometry + selection taken at drag start, so move-drags can
+// rebuild from the start state each frame (only net displacement matters) and
+// Escape can restore exactly.
+type GridDragBase = {
+  cols: number;
+  rows: number;
+  selected: number[];
+  splits: [number, SpriteSplitChoice][];
+  joins: [JoinGroupId, number[]][];
+  anchor: number | null;
+};
+let gridDrag: {
+  mode: "select" | "move";
+  startClient: { x: number; y: number };
+  startImg: { x: number; y: number };
+  lastImg: { x: number; y: number };
+  startOff: { x: number; y: number };
+  moved: boolean;
+  subtract: boolean;
+  base: GridDragBase;
+} | null = null;
+// Move-drag updates are coalesced to one grid rebuild per animation frame.
+let gridMovePending: { x: number; y: number; base: GridDragBase } | null = null;
+let gridMoveRaf: number | null = null;
+let suppressNextClick = false;
+const GRID_MAX_CELLS = 50000;
+// Bound on how many selected cells the thumbnail strip / animation preview
+// will process at once — selecting thousands of cells (e.g. via ALL on a
+// dense grid) must not hang the tab. Atlas building is not capped.
+const GRID_UI_LIMIT = 400;
+
 // Data state
 let dbSprites: Record<string, string | SpriteData> = {};
 
@@ -111,6 +167,17 @@ function $(id: string) {
   return document.getElementById(id);
 }
 
+// Map a mouse event to image-pixel coordinates on the (CSS-zoomed) canvases.
+function toImageCoords(ev: MouseEvent): { x: number; y: number } {
+  const rect = overlayCanvas.getBoundingClientRect();
+  const sx = rect.width ? overlayCanvas.width / rect.width : 1;
+  const sy = rect.height ? overlayCanvas.height / rect.height : 1;
+  return {
+    x: Math.floor((ev.clientX - rect.left) * sx),
+    y: Math.floor((ev.clientY - rect.top) * sy),
+  };
+}
+
 function setupCanvases() {
   originalCanvas = $("originalCanvas") as HTMLCanvasElement;
   overlayCanvas = $("overlayCanvas") as HTMLCanvasElement;
@@ -125,6 +192,14 @@ function setupCanvases() {
   overlayCtx.imageSmoothingEnabled = false;
 
   overlayCanvas.addEventListener("click", (ev) => {
+    // A completed drag gesture must not also fire the click-toggle.
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+
     // If eyedropper is active, finalize the current hovered color
     if (bgPickActive) {
       finishBgPick(true);
@@ -139,22 +214,36 @@ function setupCanvases() {
       return;
     }
 
-    const rect = overlayCanvas.getBoundingClientRect();
-    const x = Math.floor(ev.clientX - rect.left);
-    const y = Math.floor(ev.clientY - rect.top);
+    const { x, y } = toImageCoords(ev);
 
-    const idx = detected.findIndex(
-      (s) => x >= s.x && x < s.x + s.w && y >= s.y && y < s.y + s.h
-    );
+    const idx = gridActive
+      ? gridCellIndexAt(x, y)
+      : detected.findIndex(
+          (s) => x >= s.x && x < s.x + s.w && y >= s.y && y < s.y + s.h
+        );
 
     if (idx >= 0) {
-      if (selected.has(idx)) {
+      if (
+        gridActive &&
+        ev.shiftKey &&
+        gridAnchorIndex != null &&
+        detected[gridAnchorIndex]
+      ) {
+        // Cells are enumerated row-major, so the index range between the
+        // anchor and the clicked cell is the reading-order run — ideal for
+        // grabbing an animation sequence in one shift+click.
+        const lo = Math.min(gridAnchorIndex, idx);
+        const hi = Math.max(gridAnchorIndex, idx);
+        for (let i = lo; i <= hi; i++) selected.add(i);
+      } else if (selected.has(idx)) {
         selected.delete(idx);
         // Detach from any join group when deselected so the group reflects
         // only currently-active selections.
         removeFromAnyGroup(idx);
+        if (gridActive) gridAnchorIndex = idx;
       } else {
         selected.add(idx);
+        if (gridActive) gridAnchorIndex = idx;
       }
       drawOverlay();
       renderSelectedThumbs();
@@ -162,12 +251,132 @@ function setupCanvases() {
     }
   });
 
-  // Real-time sampling while in BG pick mode
+  // Grid drag: marquee-select cells, or move the grid (MOVE tool / Alt /
+  // dragging the origin handle). Mouse events only — the gamepad synthesizes
+  // MouseEvents, and its zero-movement mousedown+mouseup+click stays below the
+  // drag threshold so its A-button click-toggle keeps working.
+  overlayCanvas.addEventListener("mousedown", (ev) => {
+    // A stale suppression flag (drag released off-canvas) must not eat the
+    // click of a brand-new gesture.
+    suppressNextClick = false;
+    if (!gridActive || bgPickActive || erasePickActive) return;
+    if (ev.button !== 0) return;
+    const img = toImageCoords(ev);
+    const mode =
+      ev.altKey || gridTool === "move" || isOverGridHandle(img.x, img.y)
+        ? "move"
+        : "select";
+    gridDrag = {
+      mode,
+      startClient: { x: ev.clientX, y: ev.clientY },
+      startImg: img,
+      lastImg: img,
+      startOff: { x: gridParams.offX, y: gridParams.offY },
+      moved: false,
+      subtract: ev.ctrlKey || ev.metaKey,
+      base: {
+        cols: gridCols,
+        rows: gridRows,
+        selected: [...selected],
+        splits: [...spriteSplitChoices.entries()],
+        joins: [...joinGroups.entries()].map(
+          ([k, v]) => [k, [...v]] as [JoinGroupId, number[]]
+        ),
+        anchor: gridAnchorIndex,
+      },
+    };
+    if (mode === "move") overlayCanvas.style.cursor = "grabbing";
+    ev.preventDefault();
+  });
+
+  window.addEventListener("mousemove", (ev) => {
+    if (!gridDrag) return;
+    if (!gridDrag.moved) {
+      const dx = ev.clientX - gridDrag.startClient.x;
+      const dy = ev.clientY - gridDrag.startClient.y;
+      if (Math.hypot(dx, dy) < 3) return;
+      gridDrag.moved = true;
+    }
+    const img = toImageCoords(ev);
+    if (gridDrag.mode === "move") {
+      // Coalesce to one rebuild per animation frame — a rebuild remaps the
+      // whole cell array and can't keep up with raw mousemove rates.
+      gridMovePending = {
+        x: gridDrag.startOff.x + (img.x - gridDrag.startImg.x),
+        y: gridDrag.startOff.y + (img.y - gridDrag.startImg.y),
+        base: gridDrag.base,
+      };
+      if (gridMoveRaf == null) {
+        gridMoveRaf = window.requestAnimationFrame(() => {
+          gridMoveRaf = null;
+          const p = gridMovePending;
+          gridMovePending = null;
+          if (p) moveGridTo(p.x, p.y, p.base);
+        });
+      }
+    } else {
+      gridDrag.lastImg = img;
+      drawOverlay();
+    }
+  });
+
+  window.addEventListener("mouseup", (ev) => {
+    if (!gridDrag) return;
+    // Only the initiating left button ends the drag — a right/middle release
+    // mid-marquee must not commit it early.
+    if (ev.button !== 0) return;
+    flushPendingGridMove();
+    const drag = gridDrag;
+    gridDrag = null;
+    updateGridCursorBase();
+    if (drag.moved) {
+      // Swallow the click event the browser fires right after this mouseup.
+      suppressNextClick = true;
+      window.setTimeout(() => {
+        suppressNextClick = false;
+      }, 0);
+
+      if (drag.mode === "select") {
+        drag.lastImg = toImageCoords(ev);
+        const covered = gridCellsInRect(drag.startImg, drag.lastImg);
+        if (covered.length) {
+          if (drag.subtract) {
+            covered.forEach((i) => {
+              selected.delete(i);
+              removeFromAnyGroup(i);
+            });
+          } else {
+            covered.forEach((i) => selected.add(i));
+            gridAnchorIndex = covered[covered.length - 1];
+          }
+        }
+      }
+      // Thumbs/preview refresh is deferred to mouseup so grid-move drags stay
+      // smooth even with a large selection.
+      renderSelectedThumbs();
+      onSelectionChanged();
+    }
+    drawOverlay();
+  });
+
+  // A drag whose mouseup never arrives (alt-tab, OS dialog) must not keep
+  // marqueeing/moving on buttons-up mousemoves — cancel it on focus loss.
+  window.addEventListener("blur", () => cancelGridDrag());
+
+  // Real-time sampling while in BG pick mode, plus grid cell hover highlight.
   overlayCanvas.addEventListener("mousemove", (ev) => {
+    if (gridActive && !gridDrag && !bgPickActive && !erasePickActive) {
+      const pt = toImageCoords(ev);
+      updateGridCursor(pt.x, pt.y);
+      const idx = gridCellIndexAt(pt.x, pt.y);
+      if (idx !== gridHoverIndex) {
+        gridHoverIndex = idx;
+        drawOverlay();
+      }
+      return;
+    }
     if (!bgPickActive && !erasePickActive) return;
-    const rect = overlayCanvas.getBoundingClientRect();
-    const x = Math.floor(ev.clientX - rect.left);
-    const y = Math.floor(ev.clientY - rect.top);
+    const { x, y } = toImageCoords(ev);
     if (
       x < 0 ||
       y < 0 ||
@@ -194,6 +403,10 @@ function setupCanvases() {
   });
 
   overlayCanvas.addEventListener("mouseleave", () => {
+    if (gridHoverIndex !== -1) {
+      gridHoverIndex = -1;
+      if (gridActive) drawOverlay();
+    }
     if (bgPickActive) {
       // revert preview while outside
       const bgInput = $("bgColorInput") as HTMLInputElement;
@@ -229,18 +442,22 @@ function drawOverlay() {
   overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
   overlayCtx.lineWidth = 1;
 
-  for (let i = 0; i < detected.length; i++) {
-    const s = detected[i];
-    const inActiveGroup =
-      spriteToGroup.has(i) && selected.has(i) && groupHasMultipleSelected(i);
-    if (inActiveGroup) {
-      overlayCtx.strokeStyle = "rgba(0,180,255,0.85)";
-    } else {
-      overlayCtx.strokeStyle = selected.has(i)
-        ? "rgba(0,200,0,0.9)"
-        : "rgba(255,0,0,0.85)";
+  if (gridActive) {
+    drawGridOverlay();
+  } else {
+    for (let i = 0; i < detected.length; i++) {
+      const s = detected[i];
+      const inActiveGroup =
+        spriteToGroup.has(i) && selected.has(i) && groupHasMultipleSelected(i);
+      if (inActiveGroup) {
+        overlayCtx.strokeStyle = "rgba(0,180,255,0.85)";
+      } else {
+        overlayCtx.strokeStyle = selected.has(i)
+          ? "rgba(0,200,0,0.9)"
+          : "rgba(255,0,0,0.85)";
+      }
+      overlayCtx.strokeRect(s.x + 0.5, s.y + 0.5, s.w - 1, s.h - 1);
     }
-    overlayCtx.strokeRect(s.x + 0.5, s.y + 0.5, s.w - 1, s.h - 1);
   }
 
   // Highlight active join groups with a thicker bounding outline.
@@ -294,6 +511,13 @@ function renderSelectedThumbs() {
 
   const smallest = getSmallestSelectedDimensions();
   const units = getSelectedRenderUnits();
+  // A huge grid selection (e.g. ALL on a dense grid) would hang the tab if
+  // every cell got a thumbnail — cap the strip; the full selection still
+  // builds into the atlas.
+  const shownUnits =
+    gridActive && units.length > GRID_UI_LIMIT
+      ? units.slice(0, GRID_UI_LIMIT)
+      : units;
 
   // Toolbar with Join / Clear-joins controls.
   const toolbar = document.createElement("div");
@@ -337,7 +561,7 @@ function renderSelectedThumbs() {
 
   cont.appendChild(toolbar);
 
-  units.forEach((unit) => {
+  shownUnits.forEach((unit) => {
     const s = unit.rect;
     const c = document.createElement("canvas");
     c.width = s.w;
@@ -433,10 +657,23 @@ function renderSelectedThumbs() {
     wrap.appendChild(info);
     cont.appendChild(wrap);
   });
+
+  if (shownUnits.length < units.length) {
+    const more = document.createElement("div");
+    more.className = "sx-note";
+    more.textContent = `+${units.length - shownUnits.length} more cells selected (thumbnails capped — all build into the atlas)`;
+    cont.appendChild(more);
+  }
 }
 
 function getSortedSelectedIndices(): number[] {
   const arr = [...selected];
+  if (gridActive) {
+    // Grid cells are enumerated row-major, so index order IS reading order
+    // (left-to-right, top-to-bottom) — what animation sequences expect.
+    arr.sort((a, b) => a - b);
+    return arr;
+  }
   arr.sort((a, b) => {
     const sa = detected[a];
     const sb = detected[b];
@@ -721,6 +958,11 @@ function getSelectedRenderUnits(): RenderUnit[] {
   }
 
   units.sort((a, b) => {
+    if (gridActive) {
+      // Reading order for grid cells: top-to-bottom rows, left-to-right.
+      if (a.rect.y !== b.rect.y) return a.rect.y - b.rect.y;
+      return a.rect.x - b.rect.x;
+    }
     if (a.rect.x !== b.rect.x) return a.rect.x - b.rect.x;
     return a.rect.y - b.rect.y;
   });
@@ -842,7 +1084,12 @@ function showSplitMenu(
 
 function collectSelectionFrames(): string[] {
   if (!selected.size) return [];
-  const boxes = getSelectedBoxesExpanded();
+  let boxes = getSelectedBoxesExpanded();
+  // Preview only — extracting thousands of grid cells would hang the tab.
+  // Atlas building uses getSelectedBoxesExpanded() directly and is not capped.
+  if (gridActive && boxes.length > GRID_UI_LIMIT) {
+    boxes = boxes.slice(0, GRID_UI_LIMIT);
+  }
   const bgInput = $("bgColorInput") as HTMLInputElement | null;
   const chosenBg = bgInput?.value ? hexToRgb(bgInput.value) : detectedBg;
   const map = extractSpriteDataURLs(originalCanvas, boxes, {
@@ -954,6 +1201,589 @@ function onSelectionChanged() {
   // updateSpritePreviewDropdown();
 }
 
+// ───────────────────────── Grid slicing ─────────────────────────
+
+function gridPeriod(): { px: number; py: number } {
+  return {
+    px: Math.max(1, gridParams.cellW + gridParams.gapX),
+    py: Math.max(1, gridParams.cellH + gridParams.gapY),
+  };
+}
+
+function gridCellIndexAt(x: number, y: number): number {
+  if (!gridActive || gridCols <= 0 || gridRows <= 0) return -1;
+  if (!detected.length) return -1; // over-cap state: geometry kept, cells inert
+  const { px, py } = gridPeriod();
+  const lx = x - gridParams.offX;
+  const ly = y - gridParams.offY;
+  if (lx < 0 || ly < 0) return -1;
+  const c = Math.floor(lx / px);
+  const r = Math.floor(ly / py);
+  if (c >= gridCols || r >= gridRows) return -1;
+  // Points in the spacing gutters belong to no cell.
+  if (lx - c * px >= gridParams.cellW || ly - r * py >= gridParams.cellH)
+    return -1;
+  return r * gridCols + c;
+}
+
+// All cell indices whose area intersects the rect spanned by two points.
+function gridCellsInRect(
+  a: { x: number; y: number },
+  b: { x: number; y: number }
+): number[] {
+  if (gridCols <= 0 || gridRows <= 0 || !detected.length) return [];
+  const { px, py } = gridPeriod();
+  const { cellW, cellH, offX, offY } = gridParams;
+  const x0 = Math.min(a.x, b.x);
+  const x1 = Math.max(a.x, b.x);
+  const y0 = Math.min(a.y, b.y);
+  const y1 = Math.max(a.y, b.y);
+  if (x1 < offX || y1 < offY) return [];
+  let cMin = Math.floor((x0 - offX) / px);
+  if (cMin >= 0 && x0 - offX - cMin * px >= cellW) cMin++; // started in a gutter
+  cMin = Math.max(0, cMin);
+  let rMin = Math.floor((y0 - offY) / py);
+  if (rMin >= 0 && y0 - offY - rMin * py >= cellH) rMin++;
+  rMin = Math.max(0, rMin);
+  const cMax = Math.min(gridCols - 1, Math.floor((x1 - offX) / px));
+  const rMax = Math.min(gridRows - 1, Math.floor((y1 - offY) / py));
+  const out: number[] = [];
+  for (let r = rMin; r <= rMax; r++) {
+    for (let c = cMin; c <= cMax; c++) out.push(r * gridCols + c);
+  }
+  return out;
+}
+
+// Recompute the cell rects into `detected`, carrying the selection (and
+// splits/joins) across the rebuild by (row, col) so tweaking a parameter or
+// dragging the grid doesn't wipe the user's picks.
+function rebuildGridCells(opts?: {
+  remapSelection?: boolean;
+  // When a move-drag wraps the origin past zero by n periods, every column/row
+  // is renumbered by n — the remap shifts by these to keep the selection over
+  // the same screen region.
+  shiftCols?: number;
+  shiftRows?: number;
+}) {
+  const oldCols = gridCols;
+  const oldRows = gridRows;
+  const { px, py } = gridPeriod();
+  const { cellW, cellH, offX, offY } = gridParams;
+  const W = originalCanvas.width;
+  const H = originalCanvas.height;
+
+  const cols = W - offX >= cellW ? Math.floor((W - offX - cellW) / px) + 1 : 0;
+  const rows = H - offY >= cellH ? Math.floor((H - offY - cellH) / py) + 1 : 0;
+
+  if (cols * rows > GRID_MAX_CELLS) {
+    // A transient over-cap value (e.g. mid-typing a cell size) must not
+    // destroy the user's picks: keep the selection and the last good
+    // geometry, empty the cells so interactions go inert, and let the next
+    // valid rebuild remap from the preserved geometry.
+    detected = [];
+    gridLayerCanvas = null;
+    gridHoverIndex = -1;
+    updateGridInfo(`TOO MANY CELLS (${cols * rows})`);
+    return;
+  }
+
+  gridCols = cols;
+  gridRows = rows;
+  const cells: DetectedSprite[] = [];
+  for (let r = 0; r < rows; r++) {
+    const y = offY + r * py;
+    for (let c = 0; c < cols; c++) {
+      cells.push({ x: offX + c * px, y, w: cellW, h: cellH });
+    }
+  }
+  detected = cells;
+
+  const shiftC = opts?.shiftCols ?? 0;
+  const shiftR = opts?.shiftRows ?? 0;
+  const mapIdx = (i: number): number | null => {
+    if (oldCols <= 0) return null;
+    const r = Math.floor(i / oldCols) + shiftR;
+    const c = (i % oldCols) + shiftC;
+    return r >= 0 && c >= 0 && r < rows && c < cols ? r * cols + c : null;
+  };
+
+  if (opts?.remapSelection && oldCols > 0 && oldRows > 0) {
+    const newSelected = new Set<number>();
+    for (const i of selected) {
+      const m = mapIdx(i);
+      if (m != null) newSelected.add(m);
+    }
+    selected = newSelected;
+
+    const remappedSplits = new Map<number, SpriteSplitChoice>();
+    for (const [i, choice] of spriteSplitChoices) {
+      const m = mapIdx(i);
+      if (m != null && newSelected.has(m)) remappedSplits.set(m, choice);
+    }
+    spriteSplitChoices.clear();
+    for (const [k, v] of remappedSplits) spriteSplitChoices.set(k, v);
+
+    const groups = [...joinGroups.entries()];
+    clearJoinGroups();
+    for (const [gid, members] of groups) {
+      const mapped = members
+        .map(mapIdx)
+        .filter((m): m is number => m != null && newSelected.has(m))
+        .sort((x, y) => x - y);
+      if (mapped.length >= 2) {
+        joinGroups.set(gid, mapped);
+        mapped.forEach((m) => spriteToGroup.set(m, gid));
+      }
+    }
+
+    gridAnchorIndex =
+      gridAnchorIndex != null ? mapIdx(gridAnchorIndex) : null;
+  } else {
+    selected.clear();
+    spriteSplitChoices.clear();
+    clearJoinGroups();
+    gridAnchorIndex = null;
+  }
+  gridHoverIndex = -1;
+
+  renderGridLayer();
+  updateGridInfo();
+}
+
+// Cached base layer: dim the margins/gutters and outline every cell once, so
+// per-frame drawing is a single drawImage regardless of cell count.
+function renderGridLayer() {
+  const W = originalCanvas.width;
+  const H = originalCanvas.height;
+  let layer = gridLayerCanvas;
+  if (!layer || layer.width !== W || layer.height !== H) {
+    layer = document.createElement("canvas");
+    layer.width = W;
+    layer.height = H;
+  }
+  const ctx = layer.getContext("2d")!;
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.fillRect(0, 0, W, H);
+  for (const cell of detected) ctx.clearRect(cell.x, cell.y, cell.w, cell.h);
+
+  const path = new Path2D();
+  for (const cell of detected) {
+    path.rect(cell.x + 0.5, cell.y + 0.5, cell.w - 1, cell.h - 1);
+  }
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = "rgba(156,255,107,0.55)";
+  ctx.stroke(path);
+
+  gridLayerCanvas = layer;
+}
+
+function drawGridOverlay() {
+  if (gridLayerCanvas) overlayCtx.drawImage(gridLayerCanvas, 0, 0);
+
+  if (selected.size) {
+    const path = new Path2D();
+    for (const i of selected) {
+      const s = detected[i];
+      if (s) path.rect(s.x + 0.5, s.y + 0.5, s.w - 1, s.h - 1);
+    }
+    overlayCtx.fillStyle = "rgba(0,220,90,0.22)";
+    overlayCtx.fill(path);
+    overlayCtx.strokeStyle = "rgba(120,255,170,0.95)";
+    overlayCtx.stroke(path);
+  }
+
+  const hover = gridHoverIndex >= 0 ? detected[gridHoverIndex] : null;
+  if (hover && !gridDrag) {
+    overlayCtx.strokeStyle = "rgba(246,255,74,0.9)";
+    overlayCtx.strokeRect(hover.x + 0.5, hover.y + 0.5, hover.w - 1, hover.h - 1);
+  }
+
+  if (gridDrag?.mode === "select" && gridDrag.moved) {
+    const covered = gridCellsInRect(gridDrag.startImg, gridDrag.lastImg);
+    if (covered.length) {
+      const path = new Path2D();
+      for (const i of covered) {
+        const s = detected[i];
+        if (s) path.rect(s.x + 0.5, s.y + 0.5, s.w - 1, s.h - 1);
+      }
+      overlayCtx.strokeStyle = gridDrag.subtract
+        ? "rgba(255,80,80,0.9)"
+        : "rgba(246,255,74,0.85)";
+      overlayCtx.stroke(path);
+    }
+
+    const rx = Math.min(gridDrag.startImg.x, gridDrag.lastImg.x);
+    const ry = Math.min(gridDrag.startImg.y, gridDrag.lastImg.y);
+    const rw = Math.max(1, Math.abs(gridDrag.lastImg.x - gridDrag.startImg.x));
+    const rh = Math.max(1, Math.abs(gridDrag.lastImg.y - gridDrag.startImg.y));
+    overlayCtx.fillStyle = "rgba(246,255,74,0.08)";
+    overlayCtx.fillRect(rx, ry, rw, rh);
+    overlayCtx.setLineDash([5, 3]);
+    overlayCtx.strokeStyle = "rgba(246,255,74,0.9)";
+    overlayCtx.strokeRect(rx + 0.5, ry + 0.5, rw, rh);
+    overlayCtx.setLineDash([]);
+  }
+
+  drawGridHandle();
+}
+
+// Origin handle: a constant ~12 screen-px square at the grid origin that can
+// be dragged to move the grid in any tool mode.
+function gridHandleSize(): number {
+  return Math.max(3, Math.round(12 / canvasZoom));
+}
+
+function drawGridHandle() {
+  const size = gridHandleSize();
+  const x = gridParams.offX;
+  const y = gridParams.offY;
+  overlayCtx.fillStyle = "rgba(246,255,74,0.85)";
+  overlayCtx.fillRect(x - size / 2, y - size / 2, size, size);
+  overlayCtx.strokeStyle = "rgba(0,0,0,0.8)";
+  overlayCtx.strokeRect(x - size / 2 + 0.5, y - size / 2 + 0.5, size - 1, size - 1);
+}
+
+function isOverGridHandle(x: number, y: number): boolean {
+  const half = gridHandleSize() / 2 + 2 / canvasZoom;
+  return (
+    Math.abs(x - gridParams.offX) <= half && Math.abs(y - gridParams.offY) <= half
+  );
+}
+
+function moveGridTo(rawX: number, rawY: number, base?: GridDragBase) {
+  if (!gridActive) return;
+  const { px, py } = gridPeriod();
+  const W = originalCanvas.width;
+  const H = originalCanvas.height;
+  const maxX = Math.max(0, W - gridParams.cellW);
+  const maxY = Math.max(0, H - gridParams.cellH);
+  // Wrap negatives by whole periods so the grid slides seamlessly past zero —
+  // but only when every wrapped position is a valid origin (otherwise a
+  // single-column grid would jump to the far side on a left drag; clamp to 0
+  // instead). Wrapping renumbers columns/rows, so the wrap counts feed the
+  // selection remap shift below.
+  let x = rawX;
+  let y = rawY;
+  let wrapX = 0;
+  let wrapY = 0;
+  if (maxX >= px - 1) {
+    while (x < 0) {
+      x += px;
+      wrapX++;
+    }
+  }
+  if (maxY >= py - 1) {
+    while (y < 0) {
+      y += py;
+      wrapY++;
+    }
+  }
+  x = Math.min(Math.max(0, x), maxX);
+  y = Math.min(Math.max(0, y), maxY);
+  if (x === gridParams.offX && y === gridParams.offY) return;
+  // During a drag, rebuild from the drag-start snapshot each time so only the
+  // net displacement matters — chained incremental remaps would accumulate
+  // losses at the edges.
+  if (base) restoreGridBaseline(base);
+  gridParams.offX = x;
+  gridParams.offY = y;
+  syncGridInputs();
+  rebuildGridCells({
+    remapSelection: true,
+    shiftCols: -wrapX,
+    shiftRows: -wrapY,
+  });
+  drawOverlay();
+}
+
+function restoreGridBaseline(base: GridDragBase) {
+  gridCols = base.cols;
+  gridRows = base.rows;
+  selected = new Set(base.selected);
+  spriteSplitChoices.clear();
+  for (const [k, v] of base.splits) spriteSplitChoices.set(k, v);
+  clearJoinGroups();
+  for (const [gid, members] of base.joins) {
+    joinGroups.set(gid, [...members]);
+    members.forEach((m) => spriteToGroup.set(m, gid));
+  }
+  gridAnchorIndex = base.anchor;
+}
+
+// Apply a coalesced move-drag update immediately (used at mouseup so the drag
+// commits at its final position).
+function flushPendingGridMove() {
+  if (gridMoveRaf != null) {
+    window.cancelAnimationFrame(gridMoveRaf);
+    gridMoveRaf = null;
+  }
+  const p = gridMovePending;
+  gridMovePending = null;
+  if (p) moveGridTo(p.x, p.y, p.base);
+}
+
+function discardPendingGridMove() {
+  if (gridMoveRaf != null) {
+    window.cancelAnimationFrame(gridMoveRaf);
+    gridMoveRaf = null;
+  }
+  gridMovePending = null;
+}
+
+// Cancel an in-flight grid drag (Escape, window blur): a moved grid goes back
+// to where it started, with the drag-start selection restored exactly.
+function cancelGridDrag() {
+  if (!gridDrag) return;
+  const drag = gridDrag;
+  gridDrag = null;
+  discardPendingGridMove();
+  if (drag.moved) {
+    // Swallow the click that fires when the still-held button is released.
+    // (If it is released off-canvas no click fires; the next mousedown clears
+    // the stale flag.)
+    suppressNextClick = true;
+    if (drag.mode === "move") {
+      // Restore explicitly rather than via moveGridTo: after a full-period
+      // wrap the offset can equal the start value while the selection is
+      // shifted, which moveGridTo's no-op check would skip.
+      restoreGridBaseline(drag.base);
+      gridParams.offX = drag.startOff.x;
+      gridParams.offY = drag.startOff.y;
+      syncGridInputs();
+      rebuildGridCells({ remapSelection: true });
+      renderSelectedThumbs();
+      onSelectionChanged();
+    }
+  }
+  updateGridCursorBase();
+  drawOverlay();
+}
+
+function syncGridInputs() {
+  const set = (id: string, v: number) => {
+    const el = $(id) as HTMLInputElement | null;
+    if (el) el.value = String(v);
+  };
+  set("gridCellWInput", gridParams.cellW);
+  set("gridCellHInput", gridParams.cellH);
+  set("gridGapXInput", gridParams.gapX);
+  set("gridGapYInput", gridParams.gapY);
+  set("gridOffXInput", gridParams.offX);
+  set("gridOffYInput", gridParams.offY);
+}
+
+function readGridParamsFromInputs() {
+  const readNum = (id: string, fallback: number, min: number) => {
+    const el = $(id) as HTMLInputElement | null;
+    const s = el?.value.trim();
+    if (!s) return fallback; // mid-edit cleared field: keep the current value
+    const v = Number(s);
+    return Number.isFinite(v) ? Math.max(min, Math.floor(v)) : fallback;
+  };
+  gridParams.cellW = readNum("gridCellWInput", gridParams.cellW, 1);
+  gridParams.cellH = readNum("gridCellHInput", gridParams.cellH, 1);
+  gridParams.gapX = readNum("gridGapXInput", gridParams.gapX, 0);
+  gridParams.gapY = readNum("gridGapYInput", gridParams.gapY, 0);
+  gridParams.offX = readNum("gridOffXInput", gridParams.offX, 0);
+  gridParams.offY = readNum("gridOffYInput", gridParams.offY, 0);
+}
+
+function updateGridInfo(warning?: string) {
+  const el = $("gridInfo");
+  if (!el) return;
+  el.textContent = warning
+    ? `⚠ ${warning}`
+    : gridCols > 0 && gridRows > 0
+      ? `${gridCols}×${gridRows} — ${gridCols * gridRows} CELLS`
+      : "NO CELLS FIT";
+}
+
+// If sprites are selected when grid mode turns on, the topmost-leftmost one
+// drives the defaults: its size becomes the cell size and the grid is aligned
+// so a cell lands exactly on it.
+function seedGridDefaultsFromSelection() {
+  if (!selected.size) return;
+  let seed: DetectedSprite | null = null;
+  for (const i of selected) {
+    const s = detected[i];
+    if (!s) continue;
+    if (!seed || s.y < seed.y || (s.y === seed.y && s.x < seed.x)) seed = s;
+  }
+  if (!seed) return;
+  gridParams.cellW = Math.max(1, seed.w);
+  gridParams.cellH = Math.max(1, seed.h);
+  const { px, py } = gridPeriod();
+  gridParams.offX = seed.x % px;
+  gridParams.offY = seed.y % py;
+}
+
+function setGridActive(on: boolean) {
+  if (on === gridActive) return;
+
+  if (on) {
+    seedGridDefaultsFromSelection();
+    preGridState = {
+      detected,
+      selected: new Set(selected),
+      splits: new Map(spriteSplitChoices),
+      joins: new Map([...joinGroups.entries()].map(([k, v]) => [k, [...v]])),
+    };
+    gridActive = true;
+    selected = new Set();
+    spriteSplitChoices.clear();
+    clearJoinGroups();
+    hideSplitMenu();
+    gridCols = 0;
+    gridRows = 0;
+    rebuildGridCells();
+    syncGridInputs();
+  } else {
+    gridActive = false;
+    gridLayerCanvas = null;
+    gridHoverIndex = -1;
+    gridAnchorIndex = null;
+    gridDrag = null;
+    discardPendingGridMove();
+    if (preGridState) {
+      detected = preGridState.detected;
+      selected = preGridState.selected;
+      spriteSplitChoices.clear();
+      for (const [k, v] of preGridState.splits) spriteSplitChoices.set(k, v);
+      clearJoinGroups();
+      for (const [gid, members] of preGridState.joins) {
+        joinGroups.set(gid, members);
+        members.forEach((m) => spriteToGroup.set(m, gid));
+      }
+      preGridState = null;
+    } else {
+      detected = [];
+      selected = new Set();
+      spriteSplitChoices.clear();
+      clearJoinGroups();
+    }
+    hideSplitMenu();
+  }
+
+  updateGridModeUI();
+  drawOverlay();
+  renderSelectedThumbs();
+  onSelectionChanged();
+}
+
+// Drop grid mode without restoring the stash — used when a new image loads and
+// the stashed detection results no longer apply.
+function discardGridMode() {
+  if (!gridActive && !preGridState) return;
+  gridActive = false;
+  preGridState = null;
+  gridLayerCanvas = null;
+  gridHoverIndex = -1;
+  gridAnchorIndex = null;
+  gridDrag = null;
+  discardPendingGridMove();
+  gridCols = 0;
+  gridRows = 0;
+  updateGridModeUI();
+}
+
+function updateGridModeUI() {
+  ($("gridModeBtn") as HTMLButtonElement | null)?.classList.toggle(
+    "active",
+    gridActive
+  );
+  const bar = $("gridToolbar");
+  if (bar) bar.hidden = !gridActive;
+  const hint = $("workspaceHint");
+  const hintDim = $("workspaceHintDim");
+  if (hint) {
+    hint.textContent = gridActive
+      ? "CLICK / DRAG CELLS — SELECT"
+      : "CLICK SPRITE — TOGGLE SELECT";
+  }
+  if (hintDim) {
+    hintDim.textContent = gridActive
+      ? "SHIFT+CLICK — RANGE · ALT+DRAG — MOVE GRID"
+      : "RIGHT-CLICK THUMB — SPLIT";
+  }
+  updateGridToolButtons();
+  updateGridCursorBase();
+}
+
+function updateGridToolButtons() {
+  ($("gridToolSelectBtn") as HTMLButtonElement | null)?.classList.toggle(
+    "active",
+    gridTool === "select"
+  );
+  ($("gridToolMoveBtn") as HTMLButtonElement | null)?.classList.toggle(
+    "active",
+    gridTool === "move"
+  );
+}
+
+function updateGridCursorBase() {
+  overlayCanvas.style.cursor = gridActive
+    ? gridTool === "move"
+      ? "grab"
+      : "crosshair"
+    : "";
+}
+
+function updateGridCursor(x: number, y: number) {
+  if (!gridActive) return;
+  overlayCanvas.style.cursor = isOverGridHandle(x, y)
+    ? "move"
+    : gridTool === "move"
+      ? "grab"
+      : "crosshair";
+}
+
+// Select every cell that has any content: a pixel that is neither transparent
+// nor (when a background color is known) within tolerance of the background.
+// Faint particle-only frames count as content, so animation tails survive.
+function gridSelectAllCells() {
+  if (!gridActive || !detected.length) return;
+  const W = originalCanvas.width;
+  let data: Uint8ClampedArray | null = null;
+  try {
+    data = originalCtx.getImageData(0, 0, W, originalCanvas.height).data;
+  } catch {
+    data = null; // tainted canvas — fall back to selecting every cell
+  }
+  const bg = detectedBg;
+  const tol = detectedTolerance;
+  const cellHasContent = (cell: DetectedSprite): boolean => {
+    if (!data) return true;
+    for (let y = cell.y; y < cell.y + cell.h; y++) {
+      let i = (y * W + cell.x) * 4;
+      for (let x = 0; x < cell.w; x++, i += 4) {
+        const a = data[i + 3];
+        if (a === 0) continue;
+        if (
+          bg &&
+          Math.abs(data[i] - bg.r) <= tol &&
+          Math.abs(data[i + 1] - bg.g) <= tol &&
+          Math.abs(data[i + 2] - bg.b) <= tol
+        ) {
+          continue;
+        }
+        return true;
+      }
+    }
+    return false;
+  };
+  selected = new Set(
+    detected.map((c, i) => (cellHasContent(c) ? i : -1)).filter((i) => i >= 0)
+  );
+  gridAnchorIndex = null;
+  drawOverlay();
+  renderSelectedThumbs();
+  onSelectionChanged();
+}
+
+// ─────────────────────── End grid slicing ───────────────────────
+
 function ensureDataURL(s: string): string {
     return s.startsWith("data:") ? s : `data:image/png;base64,${s}`;
 }
@@ -986,6 +1816,9 @@ async function loadFromURL(url: string, opts?: { autoDetect?: boolean }) {
   setCanvasSize(img.naturalWidth, img.naturalHeight);
   originalCtx.clearRect(0, 0, originalCanvas.width, originalCanvas.height);
   originalCtx.drawImage(img, 0, 0);
+
+  // A stashed grid session belongs to the previous image — drop it.
+  discardGridMode();
 
   detected = [];
   selected.clear();
@@ -1057,6 +1890,10 @@ async function loadFromFile(file: File) {
 }
 
 function runDetect(explicitBg?: RGB | null) {
+  // AUTO DETECT replaces the working set — leave grid mode first (restoring
+  // any stash, which the detection results below then overwrite).
+  if (gridActive) setGridActive(false);
+
   const res = smartDetectSprites(
     originalCtx,
     originalCanvas.width,
@@ -2664,6 +3501,60 @@ function wireUI() {
     }
   );
 
+  // Grid slicing controls
+  ($("gridModeBtn") as HTMLButtonElement | null)?.addEventListener(
+    "click",
+    () => setGridActive(!gridActive)
+  );
+  ($("gridToolSelectBtn") as HTMLButtonElement | null)?.addEventListener(
+    "click",
+    () => {
+      gridTool = "select";
+      updateGridToolButtons();
+      updateGridCursorBase();
+    }
+  );
+  ($("gridToolMoveBtn") as HTMLButtonElement | null)?.addEventListener(
+    "click",
+    () => {
+      gridTool = "move";
+      updateGridToolButtons();
+      updateGridCursorBase();
+    }
+  );
+  ($("gridSelectAllBtn") as HTMLButtonElement | null)?.addEventListener(
+    "click",
+    gridSelectAllCells
+  );
+  ($("gridClearBtn") as HTMLButtonElement | null)?.addEventListener(
+    "click",
+    () => {
+      if (!gridActive) return;
+      selected.clear();
+      gridAnchorIndex = null;
+      drawOverlay();
+      renderSelectedThumbs();
+      onSelectionChanged();
+    }
+  );
+  [
+    "gridCellWInput",
+    "gridCellHInput",
+    "gridGapXInput",
+    "gridGapYInput",
+    "gridOffXInput",
+    "gridOffYInput",
+  ].forEach((id) => {
+    ($(id) as HTMLInputElement | null)?.addEventListener("input", () => {
+      if (!gridActive) return;
+      readGridParamsFromInputs();
+      rebuildGridCells({ remapSelection: true });
+      drawOverlay();
+      renderSelectedThumbs();
+      onSelectionChanged();
+    });
+  });
+
   ($("saveSpritesFirebaseBtn") as HTMLButtonElement).addEventListener(
     "click",
     saveSelectedSpritesToFirebase
@@ -2954,6 +3845,8 @@ function wireUI() {
     canvasZoom = (canvasZoom % 4) + 1; // Cycle 1, 2, 3, 4
     zoomBtn.textContent = `Zoom: ${canvasZoom}x`;
     applyCanvasZoom();
+    // The grid origin handle is sized in screen pixels — redraw at new zoom.
+    drawOverlay();
   });
 
   $("canvasFullscreenBtn")?.addEventListener("click", () => {
@@ -2991,6 +3884,9 @@ function wireUI() {
     }
     if (e.key === "Escape" && erasePickActive) {
       finishErasePick(false);
+    }
+    if (e.key === "Escape" && gridDrag) {
+      cancelGridDrag();
     }
   });
 }

@@ -222,6 +222,23 @@
         font-size: 12px; letter-spacing: .16em; color: var(--sx-green-dim);
       }
 
+      /* grid slicing sub-toolbar (sheet tab) */
+      /* .sx-toolbar's display:flex would defeat the UA [hidden] rule */
+      .sx-toolbar[hidden] { display: none; }
+      .sx-grid-toolbar {
+        background: rgba(12,30,14,.55);
+        border-bottom: 1px solid rgba(246,255,74,.25);
+      }
+      .sx-grid-x {
+        font-size: 12px; color: var(--sx-green-dim);
+      }
+      .sx-grid-info {
+        margin-left: auto;
+        font-size: 12px; letter-spacing: .12em;
+        color: var(--sx-green-dim);
+        white-space: nowrap;
+      }
+
       /* workspace canvas area */
       .sx-workspace {
         position: relative; flex: 1; overflow: hidden; min-height: 340px;
@@ -698,14 +715,15 @@
         <div class="sx-panel">
           <div class="sx-panel-head">
             <span>WORKSPACE</span>
-            <span>CLICK SPRITE — TOGGLE SELECT</span>
-            <span class="dim">RIGHT-CLICK THUMB — SPLIT</span>
+            <span id="workspaceHint">CLICK SPRITE — TOGGLE SELECT</span>
+            <span class="dim" id="workspaceHintDim">RIGHT-CLICK THUMB — SPLIT</span>
           </div>
           <div class="sx-toolbar">
             <input id="fileUrl" type="url" placeholder="IMAGE URL" style="flex:1;min-width:180px" />
             <button id="btnAddUrl" class="btn">LOAD URL</button>
             <input id="fileInput" type="file" accept="image/*" />
             <button id="detectSpritesBtn" class="btn primary">AUTO DETECT</button>
+            <button id="gridModeBtn" class="btn sx-mode" title="Slice the sheet with an adjustable grid — click or drag cells to pick frames">GRID</button>
             <label for="bgColorInput">BG</label>
             <input id="bgColorInput" type="color" value="#000000" />
             <button id="bgColorPickBtn" class="btn" title="Pick background from canvas">PICK BG</button>
@@ -716,6 +734,23 @@
             <input id="eraseToleranceInput" type="number" value="12" min="0" max="96" style="width:64px" />
             <button id="eraseColorPickBtn" class="btn" title="Pick a color to erase from canvas">PICK</button>
             <button id="eraseApplyBtn" class="btn" title="Remove pixels matching the erase color within tolerance">REMOVE</button>
+          </div>
+          <div class="sx-toolbar sx-grid-toolbar" id="gridToolbar" hidden>
+            <label for="gridCellWInput">CELL</label>
+            <input id="gridCellWInput" type="number" value="16" min="1" style="width:58px" title="Cell width (px)" />
+            <span class="sx-grid-x">×</span>
+            <input id="gridCellHInput" type="number" value="16" min="1" style="width:58px" title="Cell height (px)" />
+            <label for="gridGapXInput">SPACING</label>
+            <input id="gridGapXInput" type="number" value="0" min="0" style="width:52px" title="Horizontal spacing between cells (px)" />
+            <input id="gridGapYInput" type="number" value="0" min="0" style="width:52px" title="Vertical spacing between cells (px)" />
+            <label for="gridOffXInput">MARGIN</label>
+            <input id="gridOffXInput" type="number" value="0" min="0" style="width:52px" title="Left margin / grid X offset (px) — or drag the grid on the canvas" />
+            <input id="gridOffYInput" type="number" value="0" min="0" style="width:52px" title="Top margin / grid Y offset (px) — or drag the grid on the canvas" />
+            <button id="gridToolSelectBtn" class="btn sx-mode active" title="Click to toggle a cell · drag to marquee-select · Shift+click selects a run of cells">SELECT</button>
+            <button id="gridToolMoveBtn" class="btn sx-mode" title="Drag the canvas to move the grid (Alt+drag works in any mode)">MOVE GRID</button>
+            <button id="gridSelectAllBtn" class="btn" title="Select every non-empty cell">ALL</button>
+            <button id="gridClearBtn" class="btn" title="Clear the cell selection">NONE</button>
+            <span id="gridInfo" class="sx-grid-info"></span>
           </div>
           <div class="sx-workspace">
             <div id="canvasContainer" class="canv-wrap">
