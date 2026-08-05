@@ -3969,7 +3969,7 @@ function wireUI() {
     if (e.key === "Escape" && gridDrag) {
       cancelGridDrag();
     }
-    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "Tab") {
       const t = e.target as HTMLElement | null;
       const typing =
         !!t &&
@@ -3979,7 +3979,11 @@ function wireUI() {
           t.isContentEditable);
       if (!typing && isExtractTabActive()) {
         e.preventDefault();
-        setCanvasZoom(canvasZoom * (e.key === "ArrowUp" ? 1.25 : 0.8));
+        if (e.key === "Tab") {
+          setCanvasZoom(1);
+        } else {
+          setCanvasZoom(canvasZoom * (e.key === "ArrowUp" ? 1.25 : 0.8));
+        }
       }
     }
   });
