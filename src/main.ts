@@ -1787,12 +1787,8 @@ function updateGridToolButtons() {
 }
 
 function updateGridCursorBase() {
-  if (workspacePan) {
-    overlayCanvas.style.cursor = "grabbing";
-    return;
-  }
-  if (spacePanHeld) {
-    overlayCanvas.style.cursor = "grab";
+  if (workspacePan || spacePanHeld) {
+    overlayCanvas.style.cursor = "move";
     return;
   }
   overlayCanvas.style.cursor = gridActive
@@ -1815,7 +1811,7 @@ function updateGridCursor(x: number, y: number) {
 function applyPanCursor() {
   const cont = $("canvasContainer") as HTMLDivElement | null;
   if (cont) {
-    cont.style.cursor = workspacePan ? "grabbing" : spacePanHeld ? "grab" : "";
+    cont.style.cursor = workspacePan || spacePanHeld ? "move" : "";
   }
   updateGridCursorBase();
 }
