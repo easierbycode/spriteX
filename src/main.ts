@@ -4033,7 +4033,9 @@ function wireUI() {
       e.key === "ArrowUp" ||
       e.key === "ArrowDown" ||
       e.key === "Tab" ||
-      e.key === " "
+      e.key === " " ||
+      e.key === "f" ||
+      e.key === "F"
     ) {
       const t = e.target as HTMLElement | null;
       const typing =
@@ -4053,6 +4055,18 @@ function wireUI() {
         if (!spacePanHeld) {
           spacePanHeld = true;
           applyPanCursor();
+        }
+      } else if (e.key === "f" || e.key === "F") {
+        // Toggle workspace fullscreen. Exiting works from any tab; entering
+        // only makes sense while the EXTRACT canvas is visible.
+        if (document.fullscreenElement) {
+          e.preventDefault();
+          document.exitFullscreen().catch(() => {});
+        } else if (isExtractTabActive()) {
+          e.preventDefault();
+          $("canvasContainer")
+            ?.requestFullscreen()
+            .catch(() => {});
         }
       } else if (isExtractTabActive()) {
         e.preventDefault();
