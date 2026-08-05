@@ -82,6 +82,16 @@ let erasePickHoverHex: string | null = null;
 
 // Canvas view state
 let canvasZoom = 1;
+// Workspace panning: middle-drag, or hold spacebar and drag (hand tool).
+let spacePanHeld = false;
+let workspacePan: {
+  button: number;
+  sx: number;
+  sy: number;
+  sl: number;
+  st: number;
+  moved: boolean;
+} | null = null;
 
 // Grid slicing state. While grid mode is on, `detected` holds the grid cells
 // (enumerated row-major) and the normal selection pipeline operates on them.
@@ -199,6 +209,8 @@ function setupCanvases() {
       ev.stopPropagation();
       return;
     }
+    // Space+click is the hand tool — never a selection action.
+    if (spacePanHeld) return;
 
     // If eyedropper is active, finalize the current hovered color
     if (bgPickActive) {
@@ -259,6 +271,7 @@ function setupCanvases() {
     // A stale suppression flag (drag released off-canvas) must not eat the
     // click of a brand-new gesture.
     suppressNextClick = false;
+    if (spacePanHeld) return; // space+drag pans — handled on the container
     if (!gridActive || bgPickActive || erasePickActive) return;
     if (ev.button !== 0) return;
     const img = toImageCoords(ev);
@@ -365,7 +378,14 @@ function setupCanvases() {
 
   // Real-time sampling while in BG pick mode, plus grid cell hover highlight.
   overlayCanvas.addEventListener("mousemove", (ev) => {
-    if (gridActive && !gridDrag && !bgPickActive && !erasePickActive) {
+    if (
+      gridActive &&
+      !gridDrag &&
+      !workspacePan &&
+      !spacePanHeld &&
+      !bgPickActive &&
+      !erasePickActive
+    ) {
       const pt = toImageCoords(ev);
       updateGridCursor(pt.x, pt.y);
       const idx = gridCellIndexAt(pt.x, pt.y);
@@ -1767,6 +1787,14 @@ function updateGridToolButtons() {
 }
 
 function updateGridCursorBase() {
+  if (workspacePan) {
+    overlayCanvas.style.cursor = "grabbing";
+    return;
+  }
+  if (spacePanHeld) {
+    overlayCanvas.style.cursor = "grab";
+    return;
+  }
   overlayCanvas.style.cursor = gridActive
     ? gridTool === "move"
       ? "grab"
@@ -1775,12 +1803,21 @@ function updateGridCursorBase() {
 }
 
 function updateGridCursor(x: number, y: number) {
-  if (!gridActive) return;
+  if (!gridActive || spacePanHeld || workspacePan) return;
   overlayCanvas.style.cursor = isOverGridHandle(x, y)
     ? "move"
     : gridTool === "move"
       ? "grab"
       : "crosshair";
+}
+
+// Reflect pan state on both the container (empty margins) and the overlay.
+function applyPanCursor() {
+  const cont = $("canvasContainer") as HTMLDivElement | null;
+  if (cont) {
+    cont.style.cursor = workspacePan ? "grabbing" : spacePanHeld ? "grab" : "";
+  }
+  updateGridCursorBase();
 }
 
 // Select every cell that has any content: a pixel that is neither transparent
@@ -3907,27 +3944,54 @@ function wireUI() {
     { passive: false }
   );
 
-  // Middle-drag pans the workspace, sprite-viewer style (plain drag stays
-  // reserved for selection).
-  let panState: { sx: number; sy: number; sl: number; st: number } | null =
-    null;
+  // Pan the workspace: middle-drag, or hold spacebar and left-drag (hand
+  // tool). Plain drag stays reserved for selection.
   canvContainer?.addEventListener("mousedown", (ev) => {
-    if (ev.button !== 1) return;
-    panState = {
-      sx: ev.clientX,
-      sy: ev.clientY,
-      sl: canvContainer.scrollLeft,
-      st: canvContainer.scrollTop,
-    };
-    ev.preventDefault(); // also disables the browser's middle-click autoscroll
+    if (ev.button === 1 || (ev.button === 0 && spacePanHeld)) {
+      workspacePan = {
+        button: ev.button,
+        sx: ev.clientX,
+        sy: ev.clientY,
+        sl: canvContainer.scrollLeft,
+        st: canvContainer.scrollTop,
+        moved: false,
+      };
+      applyPanCursor();
+      ev.preventDefault(); // also disables the browser's middle-click autoscroll
+    }
   });
   window.addEventListener("mousemove", (ev) => {
-    if (!panState || !canvContainer) return;
-    canvContainer.scrollLeft = panState.sl - (ev.clientX - panState.sx);
-    canvContainer.scrollTop = panState.st - (ev.clientY - panState.sy);
+    if (!workspacePan || !canvContainer) return;
+    const dx = ev.clientX - workspacePan.sx;
+    const dy = ev.clientY - workspacePan.sy;
+    if (!workspacePan.moved && Math.hypot(dx, dy) >= 3) {
+      workspacePan.moved = true;
+    }
+    canvContainer.scrollLeft = workspacePan.sl - dx;
+    canvContainer.scrollTop = workspacePan.st - dy;
   });
   window.addEventListener("mouseup", (ev) => {
-    if (ev.button === 1) panState = null;
+    if (!workspacePan || ev.button !== workspacePan.button) return;
+    if (workspacePan.button === 0 && workspacePan.moved) {
+      // A left-button hand-tool drag must not fire the selection click.
+      suppressNextClick = true;
+      window.setTimeout(() => {
+        suppressNextClick = false;
+      }, 0);
+    }
+    workspacePan = null;
+    applyPanCursor();
+  });
+  window.addEventListener("blur", () => {
+    spacePanHeld = false;
+    workspacePan = null;
+    applyPanCursor();
+  });
+  document.addEventListener("keyup", (e) => {
+    if (e.key === " " && spacePanHeld) {
+      spacePanHeld = false;
+      applyPanCursor();
+    }
   });
 
   $("canvasFullscreenBtn")?.addEventListener("click", () => {
@@ -3969,7 +4033,12 @@ function wireUI() {
     if (e.key === "Escape" && gridDrag) {
       cancelGridDrag();
     }
-    if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "Tab") {
+    if (
+      e.key === "ArrowUp" ||
+      e.key === "ArrowDown" ||
+      e.key === "Tab" ||
+      e.key === " "
+    ) {
       const t = e.target as HTMLElement | null;
       const typing =
         !!t &&
@@ -3982,6 +4051,13 @@ function wireUI() {
         // Global: reset the workspace zoom no matter which tab is showing.
         e.preventDefault();
         setCanvasZoom(1);
+      } else if (e.key === " ") {
+        // Hold spacebar for the hand tool: click/drag pans the workspace.
+        e.preventDefault(); // no page scroll, no button activation
+        if (!spacePanHeld) {
+          spacePanHeld = true;
+          applyPanCursor();
+        }
       } else if (isExtractTabActive()) {
         e.preventDefault();
         setCanvasZoom(canvasZoom * (e.key === "ArrowUp" ? 1.25 : 0.8));
