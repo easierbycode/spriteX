@@ -3977,13 +3977,14 @@ function wireUI() {
           t.tagName === "SELECT" ||
           t.tagName === "TEXTAREA" ||
           t.isContentEditable);
-      if (!typing && isExtractTabActive()) {
+      if (typing) return;
+      if (e.key === "Tab") {
+        // Global: reset the workspace zoom no matter which tab is showing.
         e.preventDefault();
-        if (e.key === "Tab") {
-          setCanvasZoom(1);
-        } else {
-          setCanvasZoom(canvasZoom * (e.key === "ArrowUp" ? 1.25 : 0.8));
-        }
+        setCanvasZoom(1);
+      } else if (isExtractTabActive()) {
+        e.preventDefault();
+        setCanvasZoom(canvasZoom * (e.key === "ArrowUp" ? 1.25 : 0.8));
       }
     }
   });
