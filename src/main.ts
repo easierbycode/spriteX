@@ -438,6 +438,50 @@ function applyCanvasZoom() {
   overlayCanvas.style.height = `${h * scale}px`;
 }
 
+// Continuous zoom (wheel / arrow keys), anchored so the workspace point under
+// `anchor` (container-viewport coords; defaults to the viewport center) stays
+// put. Effectively unlimited range — the caps only guard against degenerate
+// element sizes.
+function setCanvasZoom(
+  next: number,
+  anchor?: { cx: number; cy: number }
+) {
+  const clamped = Math.min(4096, Math.max(0.05, next));
+  if (!Number.isFinite(clamped) || clamped === canvasZoom) return;
+  const container = $("canvasContainer") as HTMLDivElement | null;
+  const prev = canvasZoom;
+  canvasZoom = clamped;
+  if (container) {
+    const cx = anchor?.cx ?? container.clientWidth / 2;
+    const cy = anchor?.cy ?? container.clientHeight / 2;
+    const ix = (container.scrollLeft + cx) / prev;
+    const iy = (container.scrollTop + cy) / prev;
+    applyCanvasZoom();
+    container.scrollLeft = ix * canvasZoom - cx;
+    container.scrollTop = iy * canvasZoom - cy;
+  } else {
+    applyCanvasZoom();
+  }
+  updateZoomLabel();
+  // The grid origin handle is sized in screen pixels — redraw at the new zoom.
+  drawOverlay();
+}
+
+function updateZoomLabel() {
+  const btn = $("canvasZoomBtn") as HTMLButtonElement | null;
+  if (!btn) return;
+  const label =
+    canvasZoom >= 10
+      ? `${Math.round(canvasZoom)}x`
+      : `${+canvasZoom.toFixed(2)}x`;
+  btn.textContent = `Zoom: ${label}`;
+}
+
+function isExtractTabActive(): boolean {
+  const tab = document.querySelector(".sx-tab.active");
+  return (tab?.getAttribute("data-sx-tab") || "extract") === "extract";
+}
+
 function drawOverlay() {
   overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
   overlayCtx.lineWidth = 1;
@@ -3839,14 +3883,51 @@ function wireUI() {
     });
   }
 
-  // Main canvas controls
+  // Main canvas controls. Wheel and arrow keys zoom; the chip resets to 1x.
   const zoomBtn = $("canvasZoomBtn") as HTMLButtonElement;
   zoomBtn?.addEventListener("click", () => {
-    canvasZoom = (canvasZoom % 4) + 1; // Cycle 1, 2, 3, 4
-    zoomBtn.textContent = `Zoom: ${canvasZoom}x`;
-    applyCanvasZoom();
-    // The grid origin handle is sized in screen pixels — redraw at new zoom.
-    drawOverlay();
+    setCanvasZoom(1);
+  });
+  updateZoomLabel();
+
+  const canvContainer = $("canvasContainer") as HTMLDivElement | null;
+  canvContainer?.addEventListener(
+    "wheel",
+    (ev) => {
+      ev.preventDefault();
+      const rect = canvContainer.getBoundingClientRect();
+      // Exponential scaling handles both notched wheels (deltaY ±100) and
+      // fine-grained trackpad deltas; deltaMode 1 = line units (Firefox).
+      const factor = Math.exp(-ev.deltaY * (ev.deltaMode === 1 ? 0.06 : 0.002));
+      setCanvasZoom(canvasZoom * factor, {
+        cx: ev.clientX - rect.left,
+        cy: ev.clientY - rect.top,
+      });
+    },
+    { passive: false }
+  );
+
+  // Middle-drag pans the workspace, sprite-viewer style (plain drag stays
+  // reserved for selection).
+  let panState: { sx: number; sy: number; sl: number; st: number } | null =
+    null;
+  canvContainer?.addEventListener("mousedown", (ev) => {
+    if (ev.button !== 1) return;
+    panState = {
+      sx: ev.clientX,
+      sy: ev.clientY,
+      sl: canvContainer.scrollLeft,
+      st: canvContainer.scrollTop,
+    };
+    ev.preventDefault(); // also disables the browser's middle-click autoscroll
+  });
+  window.addEventListener("mousemove", (ev) => {
+    if (!panState || !canvContainer) return;
+    canvContainer.scrollLeft = panState.sl - (ev.clientX - panState.sx);
+    canvContainer.scrollTop = panState.st - (ev.clientY - panState.sy);
+  });
+  window.addEventListener("mouseup", (ev) => {
+    if (ev.button === 1) panState = null;
   });
 
   $("canvasFullscreenBtn")?.addEventListener("click", () => {
@@ -3877,7 +3958,7 @@ function wireUI() {
     });
   }
 
-  // Allow ESC to cancel picking and revert
+  // Allow ESC to cancel picking and revert; ↑/↓ zoom the workspace.
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && bgPickActive) {
       finishBgPick(false);
@@ -3887,6 +3968,19 @@ function wireUI() {
     }
     if (e.key === "Escape" && gridDrag) {
       cancelGridDrag();
+    }
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      const t = e.target as HTMLElement | null;
+      const typing =
+        !!t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "SELECT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable);
+      if (!typing && isExtractTabActive()) {
+        e.preventDefault();
+        setCanvasZoom(canvasZoom * (e.key === "ArrowUp" ? 1.25 : 0.8));
+      }
     }
   });
 }
