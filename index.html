@@ -601,6 +601,18 @@
         font-size: 13px; letter-spacing: .12em;
         color: var(--sx-green-dim);
       }
+      /* file drag & drop target — outlined while a file hovers the tab */
+      .sx-drop-hint { position: relative; }
+      .sx-drop-hint.sx-drop-active::after {
+        content: attr(data-drop-label);
+        position: absolute; inset: 6px; z-index: 6;
+        display: flex; align-items: center; justify-content: center;
+        border: 2px dashed var(--sx-yellow); border-radius: 10px;
+        background: rgba(246,255,74,.08);
+        font-size: 14px; letter-spacing: .18em; text-align: center;
+        color: var(--sx-yellow);
+        pointer-events: none;
+      }
       .dropzone.active {
         border-color: var(--sx-yellow);
         color: var(--sx-yellow);
@@ -721,7 +733,7 @@
           <div class="sx-toolbar">
             <input id="fileUrl" type="url" placeholder="IMAGE URL" style="flex:1;min-width:180px" />
             <button id="btnAddUrl" class="btn">LOAD URL</button>
-            <input id="fileInput" type="file" accept="image/*" />
+            <input id="fileInput" type="file" accept="image/*" title="Choose an image — or drag &amp; drop one anywhere on this tab" />
             <button id="detectSpritesBtn" class="btn primary">AUTO DETECT</button>
             <button id="gridModeBtn" class="btn sx-mode" title="Slice the sheet with an adjustable grid — click or drag cells to pick frames">GRID</button>
             <label for="bgColorInput">BG</label>
@@ -752,7 +764,7 @@
             <button id="gridClearBtn" class="btn" title="Clear the cell selection">NONE</button>
             <span id="gridInfo" class="sx-grid-info"></span>
           </div>
-          <div class="sx-workspace">
+          <div class="sx-workspace sx-drop-hint" data-drop-label="DROP AN IMAGE TO LOAD">
             <div id="canvasContainer" class="canv-wrap">
               <canvas id="originalCanvas" width="640" height="480"></canvas>
               <canvas id="overlayCanvas" width="640" height="480"></canvas>
@@ -1062,13 +1074,13 @@
                   <option value="uploads">UPLOADED SPRITES</option>
                 </select>
                 <button id="packerRefreshSourceBtn" class="btn" type="button" title="Reload this source from Firebase">↻ REFRESH</button>
-                <label class="btn" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+                <label class="btn" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer" title="Choose images — or drag &amp; drop them anywhere on this tab">
                   📤 UPLOAD SPRITES
                   <input id="packerUploadInput" type="file" multiple accept="image/*" style="display:none" />
                 </label>
                 <span id="packerSourceStatus" style="margin-left:auto;letter-spacing:.12em"></span>
               </div>
-              <div id="packerAvailableGrid" class="pk-grid">
+              <div id="packerAvailableGrid" class="pk-grid sx-drop-hint" data-drop-label="DROP IMAGES TO UPLOAD">
                 <div class="pk-empty">No sprites in this source.</div>
               </div>
             </div>

@@ -25,6 +25,7 @@ import {
   type SpriteData,
 } from "./atlasManager";
 import { initPackerTab, setPackerAtlasNames } from "./packerTab";
+import { wireFileDrop, isImageFile, blockStrayFileDrops } from "./fileDrop";
 import { initTilemapEditor, initTilemapGameBridge } from "./tilemapEditor";
 import { initGamepad } from "./gamepad";
 
@@ -3565,6 +3566,32 @@ function wireUI() {
       const t = ev.target as HTMLInputElement;
       if (t.files && t.files[0]) {
         await loadFromFile(t.files[0]);
+      }
+    }
+  );
+
+  blockStrayFileDrops();
+
+  // Same thing by drag & drop: anywhere on the EXTRACT tab loads the sheet.
+  wireFileDrop(
+    document.querySelector('[data-sx-panel="extract"]'),
+    document.querySelector('[data-sx-panel="extract"] .sx-workspace'),
+    async (files) => {
+      const image = files.find(isImageFile);
+      if (!image) {
+        setStatusLine("DROPPED FILE IS NOT AN IMAGE");
+        return;
+      }
+      try {
+        await loadFromFile(image);
+        // The sheet is one image — say so rather than silently ignoring the rest.
+        setStatusLine(
+          files.length > 1
+            ? `LOADED ${image.name.toUpperCase()} — ONE IMAGE AT A TIME`
+            : `LOADED ${image.name.toUpperCase()}`
+        );
+      } catch (e: any) {
+        alert("Failed to load: " + (e?.message || "unknown error"));
       }
     }
   );

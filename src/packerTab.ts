@@ -17,6 +17,7 @@ import {
   decodeAtlasFrameKey,
   type SpriteData,
 } from "./atlasManager";
+import { wireFileDrop, isImageFile } from "./fileDrop";
 
 interface PackerSprite {
   name: string;
@@ -475,7 +476,7 @@ function refreshAvailableSelectionUI() {
   }
 }
 
-async function handlePackerUpload(fileList: FileList | null) {
+async function handlePackerUpload(fileList: FileList | File[] | null) {
   if (!fileList || !fileList.length) return;
   const files = Array.from(fileList).filter(
     (f) => f.type.startsWith("image/") || /\.(png|gif|webp|jpe?g)$/i.test(f.name)
@@ -842,6 +843,20 @@ export function initPackerTab() {
       const input = ev.target as HTMLInputElement;
       await handlePackerUpload(input.files);
       input.value = "";
+    }
+  );
+
+  // Same thing by drag & drop: anywhere on the PACKER tab uploads sprites.
+  wireFileDrop(
+    document.querySelector('[data-sx-panel="packer"]'),
+    $("packerAvailableGrid"),
+    (files) => {
+      const images = files.filter(isImageFile);
+      if (!images.length) {
+        setStatus("DROPPED FILES ARE NOT IMAGES");
+        return;
+      }
+      handlePackerUpload(images);
     }
   );
 
