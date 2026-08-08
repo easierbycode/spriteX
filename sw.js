@@ -1,4 +1,4 @@
-const CACHE_NAME = 'spritex-cache-v6';
+const CACHE_NAME = 'spritex-cache-v7';
 const RESOURCES = [
   './',
   'index.html',

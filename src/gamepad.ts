@@ -58,6 +58,8 @@ const REPEAT_RATE = 95; // ms between repeats
 const DPAD_NUDGE = 14; // px moved by a d-pad tap
 const DPAD_GLIDE_DELAY = 200; // ms held before the d-pad starts gliding
 const DPAD_GLIDE_RAMP = 420; // ms from glide start to full pointer speed
+const EDGE_PAN_MARGIN = 56; // px from the edge where the view starts following
+const CURSOR_RADIUS = 18; // keeps the whole cursor ring on screen
 
 type Dir = "left" | "right" | "up" | "down";
 const DIRS: Array<[Dir, number, number]> = [
@@ -109,8 +111,9 @@ function ensureCursorEl(): HTMLDivElement {
 function showCursor() {
   if (cursorShown) return;
   cursorShown = true;
-  px = window.innerWidth / 2;
-  py = window.innerHeight / 2;
+  const view = visibleRect();
+  px = view.left + view.width / 2;
+  py = view.top + view.height / 2;
   const el = ensureCursorEl();
   el.style.display = "block";
   positionCursor();
@@ -130,11 +133,11 @@ function pulseCursor() {
   cursorEl.classList.add("pad-cursor-pulse");
 }
 
+/** Jump the cursor to a client point (the tile cursor drives this), panning
+ *  the page if that point sits outside the visible area. */
 function warpTo(pos: { x: number; y: number } | null) {
   if (!pos) return;
-  px = pos.x;
-  py = pos.y;
-  positionCursor();
+  placePointer(pos.x, pos.y);
 }
 
 function elementAt(x: number, y: number): HTMLElement | null {
@@ -345,11 +348,71 @@ function dpadState(
   };
 }
 
+/** The on-screen part of the page, in the client coordinates a position:fixed
+ *  element and clientX/clientY use. visualViewport tracks pinch-zoom; the
+ *  fallback uses clientWidth/Height because innerWidth counts the scrollbars. */
+function visibleRect() {
+  const vv = window.visualViewport;
+  if (vv) {
+    return { left: vv.offsetLeft, top: vv.offsetTop, width: vv.width, height: vv.height };
+  }
+  const de = document.documentElement;
+  return {
+    left: 0,
+    top: 0,
+    width: de.clientWidth || window.innerWidth,
+    height: de.clientHeight || window.innerHeight,
+  };
+}
+
+/** Scroll the page, reporting how much of the request it could absorb. */
+function panViewBy(dx: number, dy: number): { x: number; y: number } {
+  if (!dx && !dy) return { x: 0, y: 0 };
+  const de = document.documentElement;
+  const nx = Math.max(
+    0,
+    Math.min(Math.max(0, de.scrollWidth - de.clientWidth), window.scrollX + dx)
+  );
+  const ny = Math.max(
+    0,
+    Math.min(Math.max(0, de.scrollHeight - de.clientHeight), window.scrollY + dy)
+  );
+  const used = { x: nx - window.scrollX, y: ny - window.scrollY };
+  if (used.x || used.y) window.scrollTo(nx, ny);
+  return used;
+}
+
+function clampToView() {
+  const view = visibleRect();
+  const inset = Math.min(CURSOR_RADIUS, view.width / 2, view.height / 2);
+  px = Math.max(view.left + inset, Math.min(view.left + view.width - inset, px));
+  py = Math.max(view.top + inset, Math.min(view.top + view.height - inset, py));
+}
+
+/** Put the cursor at a client point, keeping it on screen. The workbench is
+ *  wider than most windows, so once the cursor reaches the edge margin the
+ *  page pans instead — the view follows the cursor rather than pinning it,
+ *  which is the only way a pad can reach content scrolled out of sight. */
+function placePointer(nx: number, ny: number) {
+  const view = visibleRect();
+  const margin = Math.min(EDGE_PAN_MARGIN, view.width / 3, view.height / 3);
+  const pan = panViewBy(
+    Math.min(0, nx - (view.left + margin)) +
+      Math.max(0, nx - (view.left + view.width - margin)),
+    Math.min(0, ny - (view.top + margin)) +
+      Math.max(0, ny - (view.top + view.height - margin))
+  );
+  // Panning slides the page under the cursor, so take the scrolled distance
+  // back out of the target: it keeps pointing at the same content.
+  px = nx - pan.x;
+  py = ny - pan.y;
+  clampToView();
+  positionCursor();
+}
+
 function movePointerBy(dx: number, dy: number) {
   if (!dx && !dy) return;
-  px = Math.max(0, Math.min(window.innerWidth - 1, px + dx));
-  py = Math.max(0, Math.min(window.innerHeight - 1, py + dy));
-  positionCursor();
+  placePointer(px + dx, py + dy);
   dispatchMove(px, py);
   if (inTilemapGrid()) tilemapSetCursorFromClient(px, py);
 }
@@ -409,9 +472,9 @@ function pollOnce(time: number) {
   }
 
   if (cursorShown) {
-    // Keep the cursor reachable if the window shrank underneath it.
-    px = Math.min(px, window.innerWidth - 1);
-    py = Math.min(py, window.innerHeight - 1);
+    // Keep the cursor on screen if the window shrank underneath it. Clamp
+    // only — panning here would make a parked cursor scroll the page forever.
+    clampToView();
 
     // ---- pointer movement (left stick) ----
     const ax = stickValue(pad, 0);
