@@ -1,12 +1,15 @@
 // src/gamepad.ts
-// App-wide gamepad support (standard mapping):
+// App-wide gamepad support:
 // - Left stick moves a virtual cursor across the whole UI
+// - D-pad moves it too — tap to nudge, hold to glide — so pads with no analog
+//   stick (SNES and friends) can drive the cursor. The d-pad is read from
+//   buttons 12-15 and from a hat axis, whichever the pad reports.
 // - A: click the control under the cursor (selects cycle instead of opening)
 // - B: close open modal / cancel an active eyedropper pick (ESC)
 // - LB / RB: previous / next section tab
 // - Right stick: scroll the scrollable region under the cursor
 // In the TILEMAP tab with a map loaded, the cursor becomes a tile cursor:
-// - D-pad steps cell by cell (left stick still free-moves)
+// - D-pad steps cell by cell instead of gliding (left stick still free-moves)
 // - A place · X delete · Y pick · LT/RT layer cycle · Start grid · Select undo
 //
 // The virtual cursor synthesizes real DOM events, so every mouse-driven
@@ -52,6 +55,17 @@ const POINTER_SPEED = 1100; // px/s at full deflection
 const SCROLL_SPEED = 1400; // px/s at full deflection
 const REPEAT_DELAY = 300; // ms before a held direction repeats
 const REPEAT_RATE = 95; // ms between repeats
+const DPAD_NUDGE = 14; // px moved by a d-pad tap
+const DPAD_GLIDE_DELAY = 200; // ms held before the d-pad starts gliding
+const DPAD_GLIDE_RAMP = 420; // ms from glide start to full pointer speed
+
+type Dir = "left" | "right" | "up" | "down";
+const DIRS: Array<[Dir, number, number]> = [
+  ["left", -1, 0],
+  ["right", 1, 0],
+  ["up", 0, -1],
+  ["down", 0, 1],
+];
 
 let deps: GamepadDeps = { setStatus: () => {} };
 
@@ -62,8 +76,13 @@ let cursorShown = false;
 let lastTime = 0;
 let prevPressed: boolean[] = [];
 let lastPadKey = ""; // identity of the pad prevPressed belongs to
-const repeatState = new Map<number, { downSince: number; lastFire: number }>();
+const repeatState = new Map<string, { downSince: number; lastFire: number }>();
+const dpadHeldSince = new Map<Dir, number>();
 let lastMoveTarget: Element | null = null;
+/** Axes carrying a hat switch rather than a stick — see noteHatAxes(). */
+const hatAxes = new Set<number>();
+/** Where each axis sits when the pad is untouched. */
+let restAxes: number[] = [];
 
 function activeTab(): string {
   return (
@@ -215,6 +234,54 @@ function axisValue(v: number): number {
   return sign * t * t; // quadratic curve for fine control
 }
 
+/** SNES/DirectInput pads usually report the d-pad as a HID hat switch on one
+ *  axis instead of buttons 12-15. Browsers spread the 8 directions evenly over
+ *  [-1, 1] and park the centered value outside that range — an impossible
+ *  reading for a stick, which is what identifies the axis. */
+function noteHatAxes(pad: Gamepad) {
+  for (let i = 0; i < pad.axes.length; i++) {
+    const v = pad.axes[i];
+    if (Number.isFinite(v) && Math.abs(v) > 1.05) hatAxes.add(i);
+  }
+}
+
+const HAT_DIRS: Array<[number, number]> = [
+  [0, -1], // up
+  [1, -1], // up-right
+  [1, 0], // right
+  [1, 1], // down-right
+  [0, 1], // down
+  [-1, 1], // down-left
+  [-1, 0], // left
+  [-1, -1], // up-left
+];
+
+/** Combined direction of every hat on the pad, as -1/0/1 per axis. */
+function hatVector(pad: Gamepad): { x: number; y: number } {
+  let x = 0;
+  let y = 0;
+  for (const i of hatAxes) {
+    const v = pad.axes[i];
+    if (!Number.isFinite(v) || Math.abs(v) > 1.05) continue; // centered
+    const dir = HAT_DIRS[Math.round((v + 1) * 3.5)];
+    if (!dir) continue;
+    x += dir[0];
+    y += dir[1];
+  }
+  return { x: Math.sign(x), y: Math.sign(y) };
+}
+
+/** Stick deflection measured from where the axis rests, so a non-standard pad
+ *  whose triggers idle at ±1 can't drag the cursor across the screen. */
+function stickValue(pad: Gamepad, i: number): number {
+  if (hatAxes.has(i)) return 0;
+  const v = pad.axes[i];
+  if (!Number.isFinite(v)) return 0;
+  const rest = Math.abs(restAxes[i] ?? 0) > 0.5 ? restAxes[i] : 0;
+  // An axis that idles at ±1 only travels one way — rescale it to full range.
+  return axisValue((v - rest) / (rest ? 1 + Math.abs(rest) : 1));
+}
+
 function getPad(): Gamepad | null {
   const pads = navigator.getGamepads ? navigator.getGamepads() : [];
   // Prefer standard-mapping pads, then the most recently active one, so an
@@ -248,15 +315,14 @@ function justPressed(pad: Gamepad, i: number): boolean {
 }
 
 /** Held-direction repeat (d-pad): fires on press, then repeats after a delay. */
-function pressedWithRepeat(pad: Gamepad, i: number, now: number): boolean {
-  const down = isPressed(pad, i);
-  const state = repeatState.get(i);
+function heldWithRepeat(key: string, down: boolean, now: number): boolean {
+  const state = repeatState.get(key);
   if (!down) {
-    repeatState.delete(i);
+    repeatState.delete(key);
     return false;
   }
   if (!state) {
-    repeatState.set(i, { downSince: now, lastFire: now });
+    repeatState.set(key, { downSince: now, lastFire: now });
     return true;
   }
   if (now - state.downSince >= REPEAT_DELAY && now - state.lastFire >= REPEAT_RATE) {
@@ -264,6 +330,28 @@ function pressedWithRepeat(pad: Gamepad, i: number, now: number): boolean {
     return true;
   }
   return false;
+}
+
+/** Which directions the pad is calling for, from either d-pad source. */
+function dpadState(
+  pad: Gamepad,
+  hat = hatVector(pad)
+): Record<Dir, boolean> {
+  return {
+    left: isPressed(pad, BTN.DPAD_LEFT) || hat.x < 0,
+    right: isPressed(pad, BTN.DPAD_RIGHT) || hat.x > 0,
+    up: isPressed(pad, BTN.DPAD_UP) || hat.y < 0,
+    down: isPressed(pad, BTN.DPAD_DOWN) || hat.y > 0,
+  };
+}
+
+function movePointerBy(dx: number, dy: number) {
+  if (!dx && !dy) return;
+  px = Math.max(0, Math.min(window.innerWidth - 1, px + dx));
+  py = Math.max(0, Math.min(window.innerHeight - 1, py + dy));
+  positionCursor();
+  dispatchMove(px, py);
+  if (inTilemapGrid()) tilemapSetCursorFromClient(px, py);
 }
 
 function clickTabStep(direction: -1 | 1) {
@@ -295,15 +383,22 @@ function pollOnce(time: number) {
     lastPadKey = padKey;
     prevPressed = pad.buttons.map((_, i) => isPressed(pad, i));
     repeatState.clear();
+    dpadHeldSince.clear();
+    hatAxes.clear();
+    restAxes = Array.from(pad.axes);
+    noteHatAxes(pad);
     return;
   }
 
+  noteHatAxes(pad);
   const isStandard = pad.mapping === "standard";
-  // Non-standard pads often expose triggers as axes resting at ±1 — only
-  // trust axes for wake-up/scroll when the mapping is known.
+  const hat = hatVector(pad);
+  // Axes are read relative to their resting value, so a non-standard pad whose
+  // triggers idle at ±1 no longer has to be excluded here.
   const anyInput =
     pad.buttons.some((b, i) => isPressed(pad, i)) ||
-    (isStandard && pad.axes.some((a) => Math.abs(a) > DEADZONE));
+    !!(hat.x || hat.y) ||
+    pad.axes.some((_a, i) => stickValue(pad, i) !== 0);
   const wasShown = cursorShown;
   if (anyInput) showCursor();
   if (!wasShown && cursorShown) {
@@ -319,41 +414,53 @@ function pollOnce(time: number) {
     py = Math.min(py, window.innerHeight - 1);
 
     // ---- pointer movement (left stick) ----
-    const ax = axisValue(pad.axes[0] || 0);
-    const ay = axisValue(pad.axes[1] || 0);
-    if (ax || ay) {
-      px = Math.max(0, Math.min(window.innerWidth - 1, px + ax * POINTER_SPEED * dt));
-      py = Math.max(0, Math.min(window.innerHeight - 1, py + ay * POINTER_SPEED * dt));
-      positionCursor();
-      dispatchMove(px, py);
-      if (inTilemapGrid()) tilemapSetCursorFromClient(px, py);
-    }
+    const ax = stickValue(pad, 0);
+    const ay = stickValue(pad, 1);
+    movePointerBy(ax * POINTER_SPEED * dt, ay * POINTER_SPEED * dt);
 
-    // ---- d-pad: grid steps in tilemap, pointer nudges elsewhere ----
+    // ---- d-pad: grid steps in tilemap, pointer drive elsewhere ----
     const now = time;
-    const dirs: Array<[number, number, number]> = [
-      [BTN.DPAD_LEFT, -1, 0],
-      [BTN.DPAD_RIGHT, 1, 0],
-      [BTN.DPAD_UP, 0, -1],
-      [BTN.DPAD_DOWN, 0, 1],
-    ];
-    for (const [btn, dx, dy] of dirs) {
-      if (pressedWithRepeat(pad, btn, now)) {
-        if (inTilemapGrid()) {
-          warpTo(tilemapMoveCursor(dx, dy));
-        } else {
-          px = Math.max(0, Math.min(window.innerWidth - 1, px + dx * 14));
-          py = Math.max(0, Math.min(window.innerHeight - 1, py + dy * 14));
-          positionCursor();
-          dispatchMove(px, py);
+    const down = dpadState(pad, hat);
+    if (inTilemapGrid()) {
+      dpadHeldSince.clear();
+      for (const [dir, dx, dy] of DIRS) {
+        if (heldWithRepeat(dir, down[dir], now)) warpTo(tilemapMoveCursor(dx, dy));
+      }
+    } else {
+      // A tap nudges by a few pixels; holding glides at stick speed, which is
+      // the only way across the screen on a pad with no analog stick.
+      repeatState.clear(); // grid-step state, stale outside the tilemap
+      let gx = 0;
+      let gy = 0;
+      let nx = 0;
+      let ny = 0;
+      for (const [dir, dx, dy] of DIRS) {
+        if (!down[dir]) {
+          dpadHeldSince.delete(dir);
+          continue;
+        }
+        if (!dpadHeldSince.has(dir)) {
+          dpadHeldSince.set(dir, now);
+          nx += dx * DPAD_NUDGE;
+          ny += dy * DPAD_NUDGE;
+        }
+        const held = now - (dpadHeldSince.get(dir) ?? now);
+        if (held >= DPAD_GLIDE_DELAY) {
+          const ramp = Math.min(1, (held - DPAD_GLIDE_DELAY) / DPAD_GLIDE_RAMP);
+          gx += dx * ramp;
+          gy += dy * ramp;
         }
       }
+      movePointerBy(
+        nx + gx * POINTER_SPEED * dt,
+        ny + gy * POINTER_SPEED * dt
+      );
     }
 
     // ---- right stick: scroll under cursor (standard mapping only) ----
     if (isStandard) {
-      const rx = axisValue(pad.axes[2] || 0);
-      const ry = axisValue(pad.axes[3] || 0);
+      const rx = stickValue(pad, 2);
+      const ry = stickValue(pad, 3);
       if (rx || ry) {
         scrollAt(px, py, rx * SCROLL_SPEED * dt, ry * SCROLL_SPEED * dt);
       }
@@ -404,9 +511,17 @@ export function initGamepad(d: GamepadDeps) {
 
   window.addEventListener("gamepadconnected", (e) => {
     const ev = e as GamepadEvent;
+    const pad = ev.gamepad;
     deps.setStatus(
-      `GAMEPAD CONNECTED · ${(ev.gamepad?.id || "PAD").slice(0, 24).toUpperCase()}`
+      `GAMEPAD CONNECTED · ${(pad?.id || "PAD").slice(0, 24).toUpperCase()}`
     );
+    // Pads vary wildly in where they put the d-pad — log the layout so an
+    // unmapped one can be diagnosed without guesswork (see __sxPadInfo).
+    console.info("[spriteX] gamepad connected:", pad?.id, {
+      mapping: pad?.mapping,
+      axes: pad?.axes.length,
+      buttons: pad?.buttons.length,
+    });
     showCursor();
   });
 
@@ -417,6 +532,25 @@ export function initGamepad(d: GamepadDeps) {
   // Test hook: lets scripted tests step the poll loop deterministically
   // (rAF does not fire in hidden tabs). Mirrors __sxTilemap in tilemapEditor.
   (window as any).__sxGamepadPump = (time: number) => pollOnce(time);
+
+  // Diagnostic hook: `__sxPadInfo()` in the console dumps what the live pad
+  // reports, which is how to find an unrecognised d-pad.
+  (window as any).__sxPadInfo = () => {
+    const pad = getPad();
+    if (!pad) return null;
+    return {
+      id: pad.id,
+      index: pad.index,
+      mapping: pad.mapping,
+      axes: Array.from(pad.axes),
+      restAxes: [...restAxes],
+      hatAxes: [...hatAxes],
+      dpad: dpadState(pad),
+      pressedButtons: pad.buttons
+        .map((_b, i) => (isPressed(pad, i) ? i : -1))
+        .filter((i) => i >= 0),
+    };
+  };
 
   requestAnimationFrame(poll);
 }
