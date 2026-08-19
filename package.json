@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "build:web": "esbuild src/main.ts --bundle --sourcemap --minify --format=esm --platform=browser --outdir=dist/assets --external:https://www.gstatic.com/*",
+    "build:lib": "esbuild src/atlasManager.ts --bundle --sourcemap --minify --format=esm --platform=browser --outfile=dist/lib/index.js --external:https://www.gstatic.com/*",
     "build:plugin": "node scripts/build-plugin.mjs",
     "copy": "node scripts/copy-static.mjs",
-    "build": "npm run build:web && npm run build:plugin && npm run copy",
+    "build": "npm run build:web && npm run build:lib && npm run build:plugin && npm run copy",
     "download:atlas": "node scripts/download-atlas.mjs",
     "extract:frames": "node scripts/extract-frames.mjs",
     "optimize:atlas": "node scripts/optimize-atlas.mjs",
