@@ -474,6 +474,12 @@
       .pk-cell.replaced .pk-cell-label { color: var(--sx-green); }
       .pk-cell.added { border-color: var(--sx-amber); }
       .pk-cell.added .pk-cell-label { color: var(--sx-amber); }
+      /* replacement still bigger than the frame's slot — must be cropped */
+      .pk-cell.oversized {
+        border-color: var(--sx-amber); border-style: dashed;
+        box-shadow: 0 0 12px rgba(255,176,60,.3);
+      }
+      .pk-cell.oversized .pk-cell-label { color: var(--sx-amber); }
       .pk-badge {
         position: absolute; top: 2px; right: 2px;
         min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px;
@@ -492,6 +498,10 @@
         background: rgba(8,20,10,.85);
       }
       .pk-cell-btn:hover { border-color: rgba(246,255,74,.6); color: var(--sx-yellow); }
+      .pk-cell-btn2 { left: 23px; }
+      .pk-cell.oversized .pk-cell-btn2 {
+        border-color: var(--sx-amber); color: var(--sx-amber);
+      }
 
       /* packer dock — target / replacement mapping rows */
       .pk-map-list {
@@ -529,6 +539,36 @@
         background: rgba(8,20,10,.85);
       }
       .pk-map-remove:hover { border-color: rgba(246,255,74,.6); color: var(--sx-yellow); }
+
+      /* packer crop dialog — align the original frame's mask over a replacement */
+      .pk-crop-modal { width: min(900px, 94vw); }
+      .pk-crop-sub {
+        margin-top: 6px; font-size: 11px; letter-spacing: .12em;
+        color: var(--sx-green-dim);
+      }
+      .pk-crop-stage {
+        margin-top: 10px; height: min(52vh, 460px);
+        display: flex; align-items: center; justify-content: center;
+        overflow: auto; padding: 12px;
+        border: 1px solid var(--sx-line); border-radius: 10px;
+        background: rgba(6,16,8,.55);
+      }
+      #packerCropCanvas {
+        image-rendering: pixelated; image-rendering: crisp-edges;
+        cursor: move; flex: none;
+        background: var(--sx-checker-sm); background-size: 12px 12px;
+      }
+      .pk-crop-bar {
+        display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+        margin-top: 10px; font-size: 11px; letter-spacing: .12em;
+        color: var(--sx-green-dim);
+      }
+      .pk-crop-bar label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+      .pk-crop-bar input[type="range"] { width: 120px; }
+      .pk-crop-actions {
+        display: flex; gap: 8px; flex-wrap: wrap;
+        justify-content: flex-end; margin-top: 12px;
+      }
 
       #atlasPreviewImg {
         max-width: 100%;
@@ -1054,6 +1094,11 @@
             <select id="packerAtlasSelect" style="min-width:240px">
               <option value="">-- Select an atlas --</option>
             </select>
+            <label for="packerPreserveLayout" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer"
+                   title="Write the PNG in the exact layout it was loaded in — untouched frames keep their rects. Off repacks every frame onto a new grid.">
+              <input id="packerPreserveLayout" type="checkbox" checked />
+              PRESERVE LAYOUT
+            </label>
             <span id="packerAtlasStatus" class="sx-note" style="margin-left:auto"></span>
           </div>
           <div style="flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:18px">
@@ -1163,6 +1208,36 @@
         </div>
         <div class="row" style="margin-top: 10px; justify-content: flex-end;">
           <button id="confirmImportAtlasBtn" class="btn primary" type="button">IMPORT</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="packerCropModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="packerCropTitle">
+      <div class="modal-content pk-crop-modal">
+        <div class="row" style="justify-content: space-between; align-items: center;">
+          <strong id="packerCropTitle">CROP REPLACEMENT</strong>
+          <span id="packerCropStep" class="sx-note"></span>
+          <!-- first .btn in the dialog: the gamepad's B button clicks it to back out -->
+          <button id="packerCropCloseBtn" class="btn" type="button">CANCEL</button>
+        </div>
+        <div id="packerCropSubtitle" class="pk-crop-sub"></div>
+        <div id="packerCropStage" class="pk-crop-stage">
+          <canvas id="packerCropCanvas"></canvas>
+        </div>
+        <div class="pk-crop-bar">
+          <span id="packerCropInfo"></span>
+          <label><input id="packerCropGhostToggle" type="checkbox" checked /> GHOST ORIGINAL FRAME</label>
+          <label>ZOOM
+            <input id="packerCropZoom" type="range" min="1" max="12" step="1" value="1" />
+            <span id="packerCropZoomLabel">1×</span>
+          </label>
+          <span style="margin-left:auto">DRAG THE MASK · ARROWS NUDGE · SHIFT = 8PX</span>
+        </div>
+        <div class="pk-crop-actions">
+          <button id="packerCropCenterBtn" class="btn" type="button">CENTER MASK</button>
+          <button id="packerCropScaleBtn" class="btn" type="button" title="Shrink the whole replacement to fit instead of cropping">⤢ SCALE TO FIT</button>
+          <button id="packerCropSkipBtn" class="btn" type="button" title="Leave this frame as it is">SKIP FRAME</button>
+          <button id="packerCropApplyBtn" class="btn primary" type="button">✂ KEEP MASKED AREA</button>
         </div>
       </div>
     </div>

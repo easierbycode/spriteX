@@ -7,7 +7,14 @@
 // selects one or more replacement sprites; N selected sprites replace N
 // consecutive frames starting at the target (extras past the end of the
 // atlas are skipped). Selected sprites can also be appended as new frames.
-// Saving repacks the atlas and writes it back to RTDB (atlases/{key}).
+//
+// Saving writes the atlas back to RTDB (atlases/{key}) in the exact layout it
+// came out of the cloud in: the original PNG is repainted in place so every
+// untouched frame keeps its byte-identical rect. A replacement bigger than the
+// frame's box therefore has to lose pixels, and the player picks which ones in
+// the crop dialog — a mask the size of the original frame that they slide over
+// the replacement. Turning PRESERVE LAYOUT off falls back to a full repack,
+// which re-derives the grid and moves everything.
 
 import {
   fetchAtlas,
@@ -18,6 +25,17 @@ import {
   type SpriteData,
 } from "./atlasManager";
 import { wireFileDrop, isImageFile } from "./fileDrop";
+import {
+  boxSignature,
+  frameBox,
+  framesByKey,
+  rebuildPreservingLayout,
+  type AdditionPaint,
+  type FrameSlot,
+  type Rect,
+  type SlotPaint,
+} from "./packerLayout";
+import { openCropDialog, type CropResult } from "./packerCrop";
 
 interface PackerSprite {
   name: string;
@@ -26,13 +44,38 @@ interface PackerSprite {
   id?: string;
 }
 
+/** An atlas frame as loaded: its thumbnail plus the sheet region it owns. */
+interface FrameEntry extends PackerSprite, FrameSlot {}
+
+/** How a replacement sprite is fitted into the frame's box. */
+type FitMode = "center" | "crop" | "scale";
+
+interface Replacement {
+  /** The sprite the player picked, at full size. */
+  source: PackerSprite;
+  srcW: number;
+  srcH: number;
+  mode: FitMode;
+  /** Top-left of the box-sized mask inside the source, for mode "crop". */
+  crop?: { x: number; y: number };
+  /** What actually gets painted — post crop or scale. */
+  dataURL: string;
+  outW: number;
+  outH: number;
+}
+
 // Current atlas being edited
 let atlasKey = "";
-let frames: PackerSprite[] = []; // original frames, in atlas order
-let replacements = new Map<number, PackerSprite>(); // frame index -> replacement
+let frames: FrameEntry[] = []; // original frames, in atlas order
+let replacements = new Map<number, Replacement>(); // frame index -> replacement
 let additions: PackerSprite[] = []; // frames appended via ADD AS NEW
 let targetIndex: number | null = null; // anchor frame for the next replace
 let selectedSources: PackerSprite[] = []; // replacements, in click order
+
+// The atlas exactly as it came from RTDB — the base the preserved rebuild
+// repaints, and the source of the crop dialog's ghost frames.
+let sheetImg: HTMLImageElement | null = null;
+let sheetJson: any = null;
 
 // Available-sprites panel
 let uploads: PackerSprite[] = [];
@@ -43,6 +86,7 @@ let availableLoadToken = 0;
 
 let atlasLoadToken = 0;
 let saving = false;
+let cropping = false; // a crop dialog owns the screen
 let firstShowDone = false;
 
 function $(id: string) {
@@ -67,6 +111,21 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
+/** Decoded sprites, keyed by data URL — replacing a frame needs the source's
+ *  pixel size before anything can be laid out. */
+const imageCache = new Map<string, HTMLImageElement>();
+
+async function getImage(dataURL: string): Promise<HTMLImageElement> {
+  const hit = imageCache.get(dataURL);
+  if (hit) return hit;
+  const img = await loadImage(dataURL);
+  // Data URLs are big; keep the cache to the working set rather than every
+  // sprite the player has ever hovered.
+  if (imageCache.size > 240) imageCache.clear();
+  imageCache.set(dataURL, img);
+  return img;
+}
+
 function readFileAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -76,28 +135,10 @@ function readFileAsDataURL(file: File): Promise<string> {
   });
 }
 
-/** Frames map from atlas JSON — handles top-level/texture frames and the
- *  Phaser multi-atlas array form. */
-function getFramesMap(json: any): Record<string, any> {
-  if (!json) return {};
-  const raw = json.frames ?? json.textures?.[0]?.frames;
-  if (!raw) return {};
-  if (Array.isArray(raw)) {
-    const map: Record<string, any> = {};
-    raw.forEach((f: any, i: number) => {
-      if (f && f.frame) map[f.filename ?? String(i)] = f;
-    });
-    return map;
-  }
-  return raw;
-}
-
 /** Tight source rect for a frame. Untrimmed spriteX-style atlases center the
  *  sprite inside a uniform cell via spriteSourceSize — crop to the sprite so
  *  replacements and repacks don't accumulate cell padding. */
-function frameSourceRect(
-  entry: any
-): { x: number; y: number; w: number; h: number } | null {
+function frameSourceRect(entry: any): Rect | null {
   const f = entry?.frame;
   if (!f || typeof f.w !== "number" || typeof f.h !== "number") return null;
   const ss = entry.spriteSourceSize;
@@ -107,14 +148,20 @@ function frameSourceRect(
   return { x: f.x, y: f.y, w: f.w, h: f.h };
 }
 
-async function sliceAtlasToSprites(png: string, json: any): Promise<PackerSprite[]> {
+/** Slice a stored atlas into per-frame thumbnails, keeping each frame's key
+ *  and its box in the sheet so the layout can be rebuilt around it. */
+async function sliceAtlasFrames(
+  png: string,
+  json: any
+): Promise<{ img: HTMLImageElement; entries: FrameEntry[] }> {
   const img = await loadImage(ensureDataURL(png));
-  const map = getFramesMap(json);
-  const out: PackerSprite[] = [];
+  const map = framesByKey(json);
+  const entries: FrameEntry[] = [];
   for (const key of Object.keys(map)) {
     const entry = map[key];
+    const box = frameBox(entry);
     const rect = frameSourceRect(entry);
-    if (!rect) continue;
+    if (!box || !rect) continue;
     const f = entry.frame;
     const ss = entry.spriteSourceSize;
     const srcSize = entry.sourceSize;
@@ -139,12 +186,19 @@ async function sliceAtlasToSprites(png: string, json: any): Promise<PackerSprite
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
     }
-    out.push({
+    entries.push({
+      key,
       name: decodeAtlasFrameKey(entry?.filename ?? key),
       dataURL: c.toDataURL("image/png"),
+      box,
     });
   }
-  return out;
+  return { img, entries };
+}
+
+async function sliceAtlasToSprites(png: string, json: any): Promise<PackerSprite[]> {
+  const { entries } = await sliceAtlasFrames(png, json);
+  return entries.map(({ name, dataURL }) => ({ name, dataURL }));
 }
 
 function dedupName(base: string, taken: Set<string>): string {
@@ -152,6 +206,176 @@ function dedupName(base: string, taken: Set<string>): string {
   let i = 2;
   while (taken.has(`${base}_${i}`)) i++;
   return `${base}_${i}`;
+}
+
+/** ==================== layout mode ==================== */
+
+function preserveLayout(): boolean {
+  const box = $("packerPreserveLayout") as HTMLInputElement | null;
+  return box ? box.checked : true;
+}
+
+/** True once the atlas is loaded well enough to repaint in place. */
+function canPreserveLayout(): boolean {
+  return !!(sheetImg && sheetJson && frames.length);
+}
+
+/** Frames sharing a sheet region are aliases of the same pixels: repainting
+ *  one necessarily repaints the others, so they always move together. */
+function aliasIndices(index: number): number[] {
+  const box = frames[index]?.box;
+  if (!box) return [];
+  const sig = boxSignature(box);
+  const out: number[] = [];
+  frames.forEach((f, i) => {
+    if (i !== index && boxSignature(f.box) === sig) out.push(i);
+  });
+  return out;
+}
+
+function setReplacement(index: number, rep: Replacement | null) {
+  const targets = [index, ...aliasIndices(index)];
+  for (const i of targets) {
+    if (rep) replacements.set(i, rep);
+    else replacements.delete(i);
+  }
+}
+
+/** Replacements that no longer fit their frame's box — they must be cropped or
+ *  scaled before the layout can be preserved. */
+function unfittedIndices(): number[] {
+  const out: number[] = [];
+  replacements.forEach((rep, i) => {
+    const box = frames[i]?.box;
+    if (!box) return;
+    if (rep.outW > box.w || rep.outH > box.h) out.push(i);
+  });
+  return out;
+}
+
+/** Render a source sprite as it will be painted into `box`. */
+async function makeReplacement(
+  box: Rect,
+  source: PackerSprite,
+  img: HTMLImageElement,
+  choice:
+    | { mode: "center" }
+    | { mode: "crop"; x: number; y: number }
+    | { mode: "scale" }
+): Promise<Replacement> {
+  const srcW = Math.max(1, img.naturalWidth || img.width);
+  const srcH = Math.max(1, img.naturalHeight || img.height);
+  const base = { source, srcW, srcH };
+
+  if (choice.mode === "crop") {
+    const c = document.createElement("canvas");
+    c.width = box.w;
+    c.height = box.h;
+    const ctx = c.getContext("2d")!;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, -choice.x, -choice.y);
+    return {
+      ...base,
+      mode: "crop",
+      crop: { x: choice.x, y: choice.y },
+      dataURL: c.toDataURL("image/png"),
+      outW: box.w,
+      outH: box.h,
+    };
+  }
+
+  if (choice.mode === "scale") {
+    const s = Math.min(box.w / srcW, box.h / srcH, 1);
+    const outW = Math.max(1, Math.floor(srcW * s));
+    const outH = Math.max(1, Math.floor(srcH * s));
+    const c = document.createElement("canvas");
+    c.width = outW;
+    c.height = outH;
+    const ctx = c.getContext("2d")!;
+    // Nearest-neighbour: a blurred downscale would quietly wreck pixel art.
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, 0, 0, srcW, srcH, 0, 0, outW, outH);
+    return {
+      ...base,
+      mode: "scale",
+      dataURL: c.toDataURL("image/png"),
+      outW,
+      outH,
+    };
+  }
+
+  return {
+    ...base,
+    mode: "center",
+    dataURL: source.dataURL,
+    outW: srcW,
+    outH: srcH,
+  };
+}
+
+/** The frame's current pixels in the sheet — the mask the crop dialog ghosts
+ *  over the replacement. */
+function ghostForFrame(index: number): HTMLCanvasElement | null {
+  const frame = frames[index];
+  if (!frame || !sheetImg) return null;
+  const { box } = frame;
+  const c = document.createElement("canvas");
+  c.width = box.w;
+  c.height = box.h;
+  const ctx = c.getContext("2d")!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(sheetImg, box.x, box.y, box.w, box.h, 0, 0, box.w, box.h);
+  return c;
+}
+
+/**
+ * Walk the player through the crop dialog for every oversized pairing.
+ * Returns false if they cancelled, which aborts the whole operation rather
+ * than half-applying it.
+ */
+async function resolveOversized(
+  jobs: Array<{ index: number; source: PackerSprite; img: HTMLImageElement }>,
+  opts: { allowSkip: boolean }
+): Promise<boolean> {
+  const guardKey = atlasKey;
+  const guardToken = atlasLoadToken;
+  cropping = true;
+  updateDock();
+  try {
+    for (let i = 0; i < jobs.length; i++) {
+      const { index, source, img } = jobs[i];
+      const frame = frames[index];
+      if (!frame) continue;
+      const existing = replacements.get(index);
+      const result: CropResult = await openCropDialog({
+        frameName: frame.name,
+        sourceName: source.name,
+        box: { w: frame.box.w, h: frame.box.h },
+        ghost: ghostForFrame(index),
+        source: img,
+        step: i + 1,
+        total: jobs.length,
+        initial: existing?.crop,
+        allowSkip: opts.allowSkip,
+      });
+      // The atlas can be swapped from under a long crop session; landing a
+      // replacement on whatever loaded since would corrupt the wrong sheet.
+      if (guardKey !== atlasKey || guardToken !== atlasLoadToken) return false;
+      if (result.action === "cancel") return false;
+      if (result.action === "skip") {
+        setReplacement(index, null);
+        continue;
+      }
+      const choice =
+        result.action === "scale"
+          ? ({ mode: "scale" } as const)
+          : ({ mode: "crop", x: result.x, y: result.y } as const);
+      setReplacement(index, await makeReplacement(frame.box, source, img, choice));
+    }
+    return true;
+  } finally {
+    cropping = false;
+  }
 }
 
 /** ==================== current atlas panel ==================== */
@@ -167,6 +391,9 @@ async function loadPackerAtlas(key: string) {
   const status = $("packerAtlasStatus");
   atlasKey = "";
   frames = [];
+  sheetImg = null;
+  sheetJson = null;
+  imageCache.clear();
   clearPendingState();
   if (!key) {
     if (status) status.textContent = "";
@@ -195,15 +422,20 @@ async function loadPackerAtlas(key: string) {
     ) {
       throw new Error("Multi-texture atlas not supported");
     }
-    const framesMap = getFramesMap(atlas.json);
+    const framesMap = framesByKey(atlas.json);
     if (Object.values(framesMap).some((f: any) => f?.rotated === true)) {
       throw new Error("Atlas contains rotated frames — not supported");
     }
-    const sliced = await sliceAtlasToSprites(atlas.png, atlas.json);
+    const sliced = await sliceAtlasFrames(atlas.png, atlas.json);
     if (token !== atlasLoadToken) return;
-    frames = sliced;
+    frames = sliced.entries;
+    sheetImg = sliced.img;
+    sheetJson = atlas.json;
     atlasKey = key;
-    if (status) status.textContent = `${frames.length} FRAMES`;
+    if (status) {
+      status.textContent =
+        `${frames.length} FRAMES · SHEET ${sliced.img.naturalWidth}×${sliced.img.naturalHeight}`;
+    }
   } catch (e: any) {
     if (token !== atlasLoadToken) return;
     console.error(e);
@@ -215,6 +447,24 @@ async function loadPackerAtlas(key: string) {
   if (token !== atlasLoadToken) return;
   renderCurrentGrid();
   updateDock();
+}
+
+function makeCellButton(
+  label: string,
+  title: string,
+  cls: string,
+  onClick: () => void
+): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = cls;
+  btn.textContent = label;
+  btn.title = title;
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    onClick();
+  });
+  return btn;
 }
 
 function renderCurrentGrid() {
@@ -235,17 +485,20 @@ function renderCurrentGrid() {
     return;
   }
 
+  const preserve = preserveLayout();
+
   frames.forEach((frame, index) => {
     const replacement = replacements.get(index);
     const cell = document.createElement("div");
     cell.className = "pk-cell";
     cell.dataset.frameIndex = String(index);
     cell.title = replacement
-      ? `${frame.name} — replaced with ${replacement.name}`
-      : frame.name;
+      ? `${frame.name} — replaced with ${replacement.source.name}` +
+        ` (${frame.box.w}×${frame.box.h} slot at ${frame.box.x},${frame.box.y})`
+      : `${frame.name} — ${frame.box.w}×${frame.box.h} at ${frame.box.x},${frame.box.y}`;
 
     const img = document.createElement("img");
-    img.src = (replacement ?? frame).dataURL;
+    img.src = replacement ? replacement.dataURL : frame.dataURL;
     cell.appendChild(img);
 
     const label = document.createElement("span");
@@ -255,18 +508,32 @@ function renderCurrentGrid() {
 
     if (replacement) {
       cell.classList.add("replaced");
-      const revert = document.createElement("button");
-      revert.type = "button";
-      revert.className = "pk-cell-btn";
-      revert.textContent = "↶";
-      revert.title = "Revert to original frame";
-      revert.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        replacements.delete(index);
-        renderCurrentGrid();
-        updateDock();
-      });
-      cell.appendChild(revert);
+      const oversized =
+        replacement.outW > frame.box.w || replacement.outH > frame.box.h;
+      if (preserve && oversized) cell.classList.add("oversized");
+      cell.appendChild(
+        makeCellButton("↶", "Revert to original frame", "pk-cell-btn", () => {
+          setReplacement(index, null);
+          renderCurrentGrid();
+          updateDock();
+        })
+      );
+      // Anything the frame's box can't hold outright is the player's call —
+      // offer the mask even when they already made it, so it can be nudged.
+      const resizable =
+        replacement.srcW > frame.box.w || replacement.srcH > frame.box.h;
+      if (preserve && resizable) {
+        cell.appendChild(
+          makeCellButton(
+            "✂",
+            oversized
+              ? "Too big for this frame — choose what to keep"
+              : "Adjust what this replacement keeps",
+            "pk-cell-btn pk-cell-btn2",
+            () => void recropFrame(index)
+          )
+        );
+      }
     }
 
     cell.addEventListener("click", () => {
@@ -292,18 +559,13 @@ function renderCurrentGrid() {
     label.textContent = sprite.name;
     cell.appendChild(label);
 
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "pk-cell-btn";
-    remove.textContent = "✕";
-    remove.title = "Remove this new frame";
-    remove.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      additions.splice(index, 1);
-      renderCurrentGrid();
-      updateDock();
-    });
-    cell.appendChild(remove);
+    cell.appendChild(
+      makeCellButton("✕", "Remove this new frame", "pk-cell-btn", () => {
+        additions.splice(index, 1);
+        renderCurrentGrid();
+        updateDock();
+      })
+    );
 
     grid.appendChild(cell);
   });
@@ -513,22 +775,105 @@ async function handlePackerUpload(fileList: FileList | File[] | null) {
 
 /** ==================== actions ==================== */
 
-function applyReplace() {
+async function applyReplace() {
+  if (cropping || saving) return;
   if (targetIndex === null || !selectedSources.length || !frames.length) return;
-  const take = Math.min(selectedSources.length, frames.length - targetIndex);
-  for (let i = 0; i < take; i++) {
-    replacements.set(targetIndex + i, selectedSources[i]);
+
+  const start = targetIndex;
+  const queued = selectedSources.slice(0, Math.max(0, frames.length - start));
+  const skipped = selectedSources.length - queued.length;
+  if (!queued.length) return;
+
+  const guardKey = atlasKey;
+  const guardToken = atlasLoadToken;
+  const preserve = preserveLayout() && canPreserveLayout();
+  // Backing out of the crop queue has to restore whatever was pending before,
+  // not wipe replacements the player had already settled on these frames.
+  const priorReplacements = new Map(replacements);
+
+  let sized: Array<{ index: number; source: PackerSprite; img: HTMLImageElement }>;
+  try {
+    sized = await Promise.all(
+      queued.map(async (source, i) => ({
+        index: start + i,
+        source,
+        img: await getImage(source.dataURL),
+      }))
+    );
+  } catch (e: any) {
+    console.error(e);
+    setStatus(`COULD NOT READ REPLACEMENT: ${e?.message || "unknown error"}`);
+    return;
   }
-  const skipped = selectedSources.length - take;
+  if (guardKey !== atlasKey || guardToken !== atlasLoadToken) return;
+
+  // Everything that already fits lands straight away; the rest goes through
+  // the mask so the player says what to keep.
+  const oversized: typeof sized = [];
+  for (const job of sized) {
+    const frame = frames[job.index];
+    if (!frame) continue;
+    const tooBig =
+      job.img.naturalWidth > frame.box.w || job.img.naturalHeight > frame.box.h;
+    if (preserve && tooBig) {
+      oversized.push(job);
+      continue;
+    }
+    setReplacement(
+      job.index,
+      await makeReplacement(frame.box, job.source, job.img, { mode: "center" })
+    );
+  }
+
+  if (oversized.length) {
+    const ok = await resolveOversized(oversized, { allowSkip: true });
+    if (!ok) {
+      // Cancelling backs the whole batch out rather than leaving a partly
+      // applied replace the player didn't ask for.
+      replacements = priorReplacements;
+      setStatus("REPLACE CANCELLED");
+      renderCurrentGrid();
+      updateDock();
+      return;
+    }
+  }
+
+  const landed = sized.filter((job) => replacements.has(job.index));
+  const resized = landed.filter(
+    (job) => replacements.get(job.index)!.mode !== "center"
+  ).length;
+  const dropped = sized.length - landed.length;
+  const notes: string[] = [];
+  if (resized) notes.push(`${resized} RESIZED TO FIT`);
+  if (dropped) notes.push(`${dropped} LEFT AS-IS`);
+  if (skipped > 0) notes.push(`SKIPPED ${skipped} PAST END OF ATLAS`);
   setStatus(
-    skipped > 0
-      ? `REPLACED ${take} FRAME(S) — SKIPPED ${skipped} PAST END OF ATLAS`
-      : `REPLACED ${take} FRAME(S)`
+    `REPLACED ${landed.length} FRAME(S)${notes.length ? ` — ${notes.join(" · ")}` : ""}`
   );
+
   targetIndex = null;
   selectedSources = [];
   renderCurrentGrid();
   refreshAvailableSelectionUI();
+  updateDock();
+}
+
+/** Re-open the mask for a replacement that is bigger than its frame's box. */
+async function recropFrame(index: number) {
+  if (cropping || saving) return;
+  const rep = replacements.get(index);
+  const frame = frames[index];
+  if (!rep || !frame) return;
+  let img: HTMLImageElement;
+  try {
+    img = await getImage(rep.source.dataURL);
+  } catch (e: any) {
+    console.error(e);
+    setStatus(`COULD NOT READ REPLACEMENT: ${e?.message || "unknown error"}`);
+    return;
+  }
+  await resolveOversized([{ index, source: rep.source, img }], { allowSkip: false });
+  renderCurrentGrid();
   updateDock();
 }
 
@@ -573,10 +918,94 @@ function resetPacker() {
   updateDock();
 }
 
+/** Repack from scratch — every frame is re-laid-out on a fresh uniform grid. */
+async function buildRepacked(): Promise<{ dataURL: string; json: any }> {
+  // Built from a snapshot so later state changes can't alter the payload.
+  // Names are uniquified in case two RTDB keys decode to the same name —
+  // a collapsed map would silently drop frames.
+  const named: Record<string, string> = {};
+  const taken = new Set<string>();
+  frames.forEach((frame, i) => {
+    const name = dedupName(frame.name, taken);
+    taken.add(name);
+    named[name] = replacements.get(i)?.dataURL ?? frame.dataURL;
+  });
+  additions.forEach((s) => {
+    const name = dedupName(s.name, taken);
+    taken.add(name);
+    named[name] = s.dataURL;
+  });
+  return buildAtlas(named);
+}
+
+/** Repaint the original sheet in place, leaving untouched frames byte-identical. */
+async function buildPreserved(): Promise<{ dataURL: string; json: any }> {
+  if (!sheetImg || !sheetJson) throw new Error("Original atlas is not loaded");
+
+  const paints = new Map<number, SlotPaint>();
+  for (const [index, rep] of replacements) {
+    paints.set(index, {
+      image: await getImage(rep.dataURL),
+      w: rep.outW,
+      h: rep.outH,
+    });
+  }
+
+  const adds: AdditionPaint[] = [];
+  for (const add of additions) {
+    const img = await getImage(add.dataURL);
+    adds.push({
+      name: add.name,
+      image: img,
+      w: img.naturalWidth || img.width,
+      h: img.naturalHeight || img.height,
+    });
+  }
+
+  const built = rebuildPreservingLayout(
+    sheetImg,
+    sheetImg.naturalWidth || sheetImg.width,
+    sheetImg.naturalHeight || sheetImg.height,
+    sheetJson,
+    frames,
+    paints,
+    adds
+  );
+  return { dataURL: built.dataURL, json: built.json };
+}
+
 async function savePackerAtlas() {
-  if (saving || !atlasKey) return;
+  if (saving || cropping || !atlasKey) return;
   const changeCount = replacements.size + additions.length;
   if (!changeCount) return;
+
+  const preserve = preserveLayout() && canPreserveLayout();
+
+  // Nothing can be written in the original layout while a replacement still
+  // overflows its frame — send those back through the mask first.
+  if (preserve) {
+    const unfitted = unfittedIndices();
+    if (unfitted.length) {
+      const jobs: Array<{
+        index: number;
+        source: PackerSprite;
+        img: HTMLImageElement;
+      }> = [];
+      for (const index of unfitted) {
+        const rep = replacements.get(index);
+        if (!rep) continue;
+        jobs.push({ index, source: rep.source, img: await getImage(rep.source.dataURL) });
+      }
+      const ok = await resolveOversized(jobs, { allowSkip: true });
+      renderCurrentGrid();
+      updateDock();
+      if (!ok) {
+        setStatus("SAVE CANCELLED — REPLACEMENTS STILL LARGER THAN THEIR FRAMES");
+        return;
+      }
+      if (!replacements.size && !additions.length) return;
+    }
+  }
 
   // Snapshot the key before any await: the module-level atlasKey is mutable,
   // and saving to a stale/blank key would overwrite the wrong RTDB node.
@@ -584,8 +1013,11 @@ async function savePackerAtlas() {
   const total = frames.length + additions.length;
   if (
     !confirm(
-      `Repack "${key}" and save to Firebase?\n` +
-        `${replacements.size} frame(s) replaced, ${additions.length} added — ${total} total frames.`
+      `Save "${key}" to Firebase?\n` +
+        `${replacements.size} frame(s) replaced, ${additions.length} added — ${total} total frames.\n` +
+        (preserve
+          ? "Original layout preserved — untouched frames keep their exact rects."
+          : "Full repack — every frame is repositioned on a new grid.")
     )
   ) {
     return;
@@ -601,28 +1033,16 @@ async function savePackerAtlas() {
   if (atlasSel) atlasSel.disabled = true;
 
   try {
-    // Built synchronously so later state changes can't alter the payload.
-    // Names are uniquified in case two RTDB keys decode to the same name —
-    // a collapsed map would silently drop frames.
-    const named: Record<string, string> = {};
-    const taken = new Set<string>();
-    frames.forEach((frame, i) => {
-      const name = dedupName(frame.name, taken);
-      taken.add(name);
-      named[name] = (replacements.get(i) ?? frame).dataURL;
-    });
-    additions.forEach((s) => {
-      const name = dedupName(s.name, taken);
-      taken.add(name);
-      named[name] = s.dataURL;
-    });
-
-    const { dataURL, json } = await buildAtlas(named);
+    const { dataURL, json } = preserve ? await buildPreserved() : await buildRepacked();
     if (!key) throw new Error("No atlas key"); // never write to the atlases root
     await saveAtlas(key, { json, png: dataURL });
 
     atlasSourceCache.delete(key); // this atlas is stale as a source now
-    setStatus(`ATLAS "${key}" SAVED TO CLOUD`);
+    setStatus(
+      preserve
+        ? `ATLAS "${key}" SAVED TO CLOUD — LAYOUT PRESERVED`
+        : `ATLAS "${key}" REPACKED AND SAVED TO CLOUD`
+    );
     if (atlasKey === key) {
       await loadPackerAtlas(key);
     }
@@ -666,25 +1086,24 @@ function updateDock() {
   // Target frame
   targetInfo.innerHTML = "";
   if (targetIndex !== null && frames[targetIndex]) {
+    const frame = frames[targetIndex];
     const row = makeMapRow();
-    row.appendChild(makeThumb(frames[targetIndex].dataURL));
+    row.appendChild(makeThumb(frame.dataURL));
     const name = document.createElement("span");
     name.className = "pk-map-name";
-    name.textContent = frames[targetIndex].name;
+    name.textContent = frame.name;
     row.appendChild(name);
     const meta = document.createElement("span");
     meta.className = "pk-map-meta";
-    meta.textContent = `FRAME ${targetIndex + 1}/${frames.length}`;
+    meta.textContent = `${frame.box.w}×${frame.box.h} · ${targetIndex + 1}/${frames.length}`;
     row.appendChild(meta);
     targetInfo.appendChild(row);
+    targetInfo.className = "pk-map-list";
   } else {
     targetInfo.className = "sx-empty-hint";
     targetInfo.textContent = frames.length
       ? "No target — click a frame in CURRENT ATLAS FRAMES."
       : "Load an atlas, then click the frame to replace.";
-  }
-  if (targetIndex !== null && frames[targetIndex]) {
-    targetInfo.className = "pk-map-list";
   }
 
   // Selected replacement sources, in click order, mapped onto frames
@@ -724,29 +1143,37 @@ function updateDock() {
     });
   }
 
+  const busy = saving || cropping;
   const replaceCount =
     targetIndex !== null && frames.length
       ? Math.min(selectedSources.length, frames.length - targetIndex)
       : 0;
   if (replaceBtn) {
-    replaceBtn.disabled = replaceCount === 0;
+    replaceBtn.disabled = replaceCount === 0 || busy;
     replaceBtn.textContent =
       replaceCount > 0 ? `↻ REPLACE ${replaceCount} FRAME(S)` : "↻ REPLACE";
   }
-  if (addBtn) addBtn.disabled = !selectedSources.length || !atlasKey;
-  if (clearBtn) clearBtn.disabled = !selectedSources.length && targetIndex === null;
+  if (addBtn) addBtn.disabled = !selectedSources.length || !atlasKey || busy;
+  if (clearBtn) clearBtn.disabled = (!selectedSources.length && targetIndex === null) || busy;
 
   const changeCount = replacements.size + additions.length;
   if (changesInfo) {
-    changesInfo.textContent = changeCount
-      ? `${replacements.size} REPLACED · ${additions.length} ADDED`
-      : "No pending changes.";
+    if (!changeCount) {
+      changesInfo.textContent = "No pending changes.";
+    } else {
+      const cropped = [...replacements.values()].filter(
+        (r) => r.mode !== "center"
+      ).length;
+      changesInfo.textContent =
+        `${replacements.size} REPLACED · ${additions.length} ADDED` +
+        (preserveLayout() && cropped ? ` · ${cropped} RESIZED` : "");
+    }
   }
   if (pendingCount) {
     pendingCount.textContent = changeCount ? `${changeCount} PENDING` : "";
   }
-  if (resetBtn) resetBtn.disabled = !changeCount;
-  if (saveBtn) saveBtn.disabled = !changeCount || !atlasKey || saving;
+  if (resetBtn) resetBtn.disabled = !changeCount || busy;
+  if (saveBtn) saveBtn.disabled = !changeCount || !atlasKey || busy;
 
   updateHint();
 }
@@ -755,12 +1182,17 @@ function updateHint() {
   const hint = $("packerHint");
   if (!hint) return;
   const n = selectedSources.length;
-  if (!atlasKey) {
+  if (cropping) {
+    hint.textContent = "ALIGN THE MASK OVER WHAT YOU WANT TO KEEP";
+  } else if (!atlasKey) {
     hint.textContent = "SELECT AN ATLAS TO EDIT";
   } else if (targetIndex === null && !n) {
     hint.textContent = "CLICK A FRAME TO SET REPLACE TARGET";
   } else if (targetIndex !== null && !n) {
-    hint.textContent = "TARGET SET — SELECT REPLACEMENT SPRITE(S) BELOW";
+    const frame = frames[targetIndex];
+    hint.textContent = frame
+      ? `TARGET SET — FRAME SLOT IS ${frame.box.w}×${frame.box.h}`
+      : "TARGET SET — SELECT REPLACEMENT SPRITE(S) BELOW";
   } else if (targetIndex !== null && n) {
     const take = Math.min(n, frames.length - targetIndex);
     const skipped = n - take;
@@ -814,7 +1246,7 @@ export function initPackerTab() {
     "change",
     async (ev) => {
       const sel = ev.target as HTMLSelectElement;
-      if (saving) {
+      if (saving || cropping) {
         sel.value = atlasKey;
         return;
       }
@@ -826,6 +1258,16 @@ export function initPackerTab() {
         return;
       }
       await loadPackerAtlas(sel.value);
+    }
+  );
+
+  ($("packerPreserveLayout") as HTMLInputElement | null)?.addEventListener(
+    "change",
+    () => {
+      // Frames that overflow their box only matter in preserve mode, so the
+      // grid's warnings and crop buttons come and go with the toggle.
+      renderCurrentGrid();
+      updateDock();
     }
   );
 
@@ -860,11 +1302,11 @@ export function initPackerTab() {
     }
   );
 
-  $("packerReplaceBtn")?.addEventListener("click", applyReplace);
+  $("packerReplaceBtn")?.addEventListener("click", () => void applyReplace());
   $("packerAddBtn")?.addEventListener("click", applyAddAsNew);
   $("packerClearBtn")?.addEventListener("click", clearSelection);
   $("packerResetBtn")?.addEventListener("click", resetPacker);
-  $("packerSaveBtn")?.addEventListener("click", savePackerAtlas);
+  $("packerSaveBtn")?.addEventListener("click", () => void savePackerAtlas());
 
   // Lazy-load the default sprite source the first time the tab is shown.
   const panel = document.querySelector('[data-sx-panel="packer"]') as HTMLElement | null;
