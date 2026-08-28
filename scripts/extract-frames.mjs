@@ -66,26 +66,8 @@ function normalizeAtlasJson(jsonVal) {
   }
 }
 
-export function decodeFrameKey(key) {
-  if (!key.startsWith("k_")) return key;
-  const hex = key.slice(2);
-  let result = "";
-  for (let i = 0; i < hex.length; i += 4) {
-    result += String.fromCodePoint(parseInt(hex.slice(i, i + 4), 16));
-  }
-  return result;
-}
-
-export function encodeFrameKey(name) {
-  // Encode UTF-16 code units, not code points: decodeFrameKey slices the hex
-  // in fixed 4-digit chunks, and astral chars (emoji) would emit 5-digit
-  // groups that break the round-trip.
-  let hex = "";
-  for (let i = 0; i < name.length; i += 1) {
-    hex += name.charCodeAt(i).toString(16).padStart(4, "0");
-  }
-  return `k_${hex}`;
-}
+import { encodeFrameKey, decodeFrameKey, decodeAtlasJsonFrames } from "./frame-keys.mjs";
+export { encodeFrameKey, decodeFrameKey, decodeAtlasJsonFrames };
 
 /** Get the frames map from an atlas JSON (handles both flat and textures[] formats). */
 function getFramesMap(atlasJson) {

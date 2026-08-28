@@ -8,7 +8,7 @@
 // the exact layout it went out in: this module repaints the original bitmap
 // in place and edits only the JSON entries of the frames that were touched.
 
-import { encodeAtlasFrameKey } from "./atlasManager";
+import { decodeAtlasFrameKey } from "./atlasManager";
 
 export interface Rect {
   x: number;
@@ -190,7 +190,11 @@ export function rebuildPreservingLayout(
     }
   });
 
-  const takenKeys = new Set(Object.keys(byKey));
+  // Dedup against decoded forms too: a sheet that still carries legacy k_-hex
+  // keys must not gain a plain-named twin of one of its own frames.
+  const takenKeys = new Set(
+    Object.keys(byKey).flatMap((k) => [k, decodeAtlasFrameKey(k)])
+  );
   for (const { add, x, y } of placements) {
     const w = Math.max(1, Math.min(Math.round(add.w), cellW));
     const h = Math.max(1, Math.min(Math.round(add.h), cellH));
@@ -208,9 +212,11 @@ export function rebuildPreservingLayout(
     if (isList) {
       container.push({ filename: add.name, ...entry });
     } else {
-      let key = encodeAtlasFrameKey(add.name);
+      // Plain names: RTDB safety is handled at the save boundary (the json is
+      // stored stringified), so the JSON itself always carries real names.
+      let key = add.name;
       let n = 2;
-      while (takenKeys.has(key)) key = encodeAtlasFrameKey(`${add.name}_${n++}`);
+      while (takenKeys.has(key)) key = `${add.name}_${n++}`;
       takenKeys.add(key);
       container[key] = entry;
     }

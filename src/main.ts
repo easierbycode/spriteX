@@ -19,6 +19,7 @@ import {
   hexToRgb,
   getAtlasActualWidth,
   decodeAtlasFrameKey,
+  decodeAtlasFrameKeysDeep,
   encodeAtlasFrameKey,
   type DetectedSprite,
   type RGB,
@@ -2256,7 +2257,11 @@ function scheduleAtlasOrderSync() {
       named[encodeAtlasFrameKey(name)] = frameData;
     });
 
-    const { dataURL, json } = await buildAtlas(named);
+    const { dataURL, json: builtJson } = await buildAtlas(named);
+    // The encoding was only an insertion-order trick for the build map — decode
+    // the result so the preview, the JSON download, and the RTDB save all carry
+    // the real frame names.
+    const json = decodeAtlasFrameKeysDeep(builtJson);
     // A duplicate/reorder/load landed while the sheet was rebuilding; discard
     // this stale rebuild and leave the dirty flag for the next round.
     if (gen !== atlasStateGen) return;
