@@ -56,29 +56,8 @@ function parseArgs(argv) {
 
 // ─── frame-key + atlas JSON helpers (in sync with atlasManager.ts) ───────────
 
-export function decodeFrameKey(key) {
-  if (typeof key !== "string" || !key.startsWith("k_")) return key;
-  const hex = key.slice(2);
-  if (hex.length === 0 || hex.length % 4 !== 0 || !/^[0-9a-fA-F]+$/.test(hex)) return key;
-  let out = "";
-  for (let i = 0; i < hex.length; i += 4) {
-    out += String.fromCodePoint(parseInt(hex.slice(i, i + 4), 16));
-  }
-  return out;
-}
-
-export function encodeFrameKey(name) {
-  let hex = "";
-  for (let i = 0; i < name.length; i += 1) {
-    hex += name.charCodeAt(i).toString(16).padStart(4, "0");
-  }
-  return `k_${hex}`;
-}
-
-function rtdbSafeKey(key) {
-  if (key && !RTDB_INVALID_KEY_CHARS.test(key)) return key;
-  return encodeFrameKey(key);
-}
+import { encodeFrameKey, decodeFrameKey } from "./frame-keys.mjs";
+export { encodeFrameKey, decodeFrameKey };
 
 function normalizeAtlasJson(jsonVal) {
   if (jsonVal == null) return null;
@@ -460,14 +439,14 @@ export async function optimizeGameAtlas(options) {
 
   let savedTo = null;
   if (save) {
-    const safeFrames = {};
-    for (const [k, v] of Object.entries(frames)) safeFrames[rtdbSafeKey(k)] = v;
-    const safeJson = { ...atlasJson, frames: safeFrames };
+    // Store the json stringified: an RTDB object tree can't hold dotted frame
+    // names (they come back k_-hex-encoded) and re-alphabetizes frame order.
+    // A string round-trips byte-for-byte with the real names.
     const rtdbPath = `games/${gameName}/atlases/${outName}`;
     const res = await fetch(`${DATABASE_URL}/${rtdbPath}.json`, {
       method: "PUT",
       body: JSON.stringify({
-        json: safeJson,
+        json: JSON.stringify(atlasJson),
         png: `data:image/png;base64,${pngBuffer.toString("base64")}`,
       }),
     });

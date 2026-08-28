@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { decodeAtlasJsonFrames, decodeFrameKey } from "./frame-keys.mjs";
 
 const DATABASE_URL = "https://evil-invaders-default-rtdb.firebaseio.com";
 
@@ -44,17 +45,6 @@ function normalizeAtlasJson(jsonVal) {
       return JSON.parse(str);
     } catch { return null; }
   }
-}
-
-/** Decode hex-encoded frame keys produced by encodeAtlasFrameKey. */
-function decodeFrameKey(key) {
-  if (!key.startsWith("k_")) return key;
-  const hex = key.slice(2);
-  let result = "";
-  for (let i = 0; i < hex.length; i += 4) {
-    result += String.fromCodePoint(parseInt(hex.slice(i, i + 4), 16));
-  }
-  return result;
 }
 
 /** List all frame names in an atlas JSON object. */
@@ -116,12 +106,14 @@ async function main() {
 
   const pngBuffer = decodeBase64Png(pngRaw);
 
+  // Legacy object-tree records carry k_-hex frame keys; decode so the file on
+  // disk always has the real frame names a game engine looks up.
   let jsonText;
   if (typeof atlasJson === "object") {
-    jsonText = `${JSON.stringify(atlasJson, null, 2)}\n`;
+    jsonText = `${JSON.stringify(decodeAtlasJsonFrames(atlasJson), null, 2)}\n`;
   } else if (typeof atlasJson === "string") {
     try {
-      jsonText = `${JSON.stringify(JSON.parse(atlasJson), null, 2)}\n`;
+      jsonText = `${JSON.stringify(decodeAtlasJsonFrames(JSON.parse(atlasJson)), null, 2)}\n`;
     } catch {
       jsonText = `${atlasJson}\n`;
     }

@@ -139,7 +139,10 @@ export async function fetchAtlas(atlasKey: string): Promise<AtlasData | null> {
     const snapshot = await get(ref(db, `atlases/${atlasKey}`));
     if (!snapshot.exists()) return null;
     const val = snapshot.val();
-    const parsedJson = normalizeAtlasJson(val?.json);
+    // Legacy records stored the json as an RTDB object tree, which hex-encodes
+    // dotted frame names (k_…) and alphabetizes frame order; decode here so the
+    // rest of the app — and anything it exports — only ever sees real names.
+    const parsedJson = decodeAtlasFrameKeysDeep(normalizeAtlasJson(val?.json));
     return { json: parsedJson ?? val?.json ?? null, png: val?.png } as AtlasData;
   } catch (error) {
     console.error(`Error fetching atlas ${atlasKey}:`, error);
@@ -181,10 +184,15 @@ export async function saveAtlas(
 ): Promise<void> {
   const db = getDB();
   try {
-    const safeJson = sanitizeAtlasJsonForRTDB(data?.json);
+    // Store the json stringified (the level editor's convention for maps and
+    // atlases alike): an RTDB object tree can't hold dotted frame names — they
+    // came back k_-hex-encoded — and re-alphabetizes frame order, which moves
+    // the atlas's first (default) frame. A string round-trips byte-for-byte.
+    // Decoding first heals any legacy k_ keys that reach a re-save.
+    const parsed = decodeAtlasFrameKeysDeep(normalizeAtlasJson(data?.json));
     await set(ref(db, `atlases/${atlasKey}`), {
       ...data,
-      json: safeJson,
+      json: parsed ? JSON.stringify(parsed) : data?.json,
     });
   } catch (error) {
     console.error(`Error saving atlas ${atlasKey}:`, error);
@@ -361,46 +369,51 @@ export function decodeAtlasFrameKey(key: string): string {
   return out;
 }
 
-const RTDB_INVALID_KEY_CHARS = /[.#$\/\[\]]/;
-
-function makeRTDBSafeKey(key: string): string {
-  if (key && !RTDB_INVALID_KEY_CHARS.test(key)) return key;
-  return encodeAtlasFrameKey(key);
-}
-
-function sanitizeAtlasFramesForRTDB(framesMap: any): any {
-  if (!framesMap || typeof framesMap !== "object" || Array.isArray(framesMap)) {
-    return framesMap;
+function decodeAtlasFrames(framesMap: any): any {
+  if (!framesMap || typeof framesMap !== "object") return framesMap;
+  // Phaser multi-atlas array form keys frames by a `filename` field.
+  if (Array.isArray(framesMap)) {
+    return framesMap.map((f: any) =>
+      f && typeof f === "object" && typeof f.filename === "string"
+        ? { ...f, filename: decodeAtlasFrameKey(f.filename) }
+        : f
+    );
   }
 
-  const safeFrames: Record<string, any> = {};
+  const decoded: Record<string, any> = {};
   Object.entries(framesMap).forEach(([key, value]) => {
-    safeFrames[makeRTDBSafeKey(key)] = value;
+    decoded[decodeAtlasFrameKey(key)] = value;
   });
-  return safeFrames;
+  return decoded;
 }
 
-function sanitizeAtlasJsonForRTDB(jsonVal: any): any {
-  const parsed = normalizeAtlasJson(jsonVal);
-  if (!parsed || typeof parsed !== "object") return jsonVal;
+/**
+ * Return a copy of atlas JSON with every k_-hex frame key decoded back to its
+ * real name (`explosion00.gif`, not `k_00650078…`). Atlases that round-tripped
+ * through RTDB as object trees carry the encoded keys; run every atlas through
+ * this at the load boundary so the encoding never leaks into the app, a JSON
+ * download, or a game. Idempotent on already-clean JSON.
+ */
+export function decodeAtlasFrameKeysDeep(jsonVal: any): any {
+  if (!jsonVal || typeof jsonVal !== "object") return jsonVal;
 
-  const safeJson = JSON.parse(JSON.stringify(parsed));
-  if (safeJson.frames) {
-    safeJson.frames = sanitizeAtlasFramesForRTDB(safeJson.frames);
+  const decodedJson = JSON.parse(JSON.stringify(jsonVal));
+  if (decodedJson.frames) {
+    decodedJson.frames = decodeAtlasFrames(decodedJson.frames);
   }
 
-  if (Array.isArray(safeJson.textures)) {
-    safeJson.textures = safeJson.textures.map((texture: any) => {
+  if (Array.isArray(decodedJson.textures)) {
+    decodedJson.textures = decodedJson.textures.map((texture: any) => {
       if (!texture || typeof texture !== "object") return texture;
       if (!texture.frames) return texture;
       return {
         ...texture,
-        frames: sanitizeAtlasFramesForRTDB(texture.frames),
+        frames: decodeAtlasFrames(texture.frames),
       };
     });
   }
 
-  return safeJson;
+  return decodedJson;
 }
 
 function getAtlasFrameEntry(framesMap: any, frameName: string): any | null {
