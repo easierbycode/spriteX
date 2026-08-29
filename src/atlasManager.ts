@@ -12,7 +12,11 @@ import { getDB, ref, get, set } from "./firebase-config";
 export interface CharacterData {
   name: string;
   textureKey: string;
-  texture: string[];
+  // Enemy/player records carry a flat frame list; boss records carry named
+  // animation sets instead (the shmup engine requires `anim.idle` on a boss
+  // and never reads `texture` there), so neither field is guaranteed.
+  texture?: string[];
+  anim?: Record<string, string[]>;
   size?: { x: number; y: number };
   anchor?: { x: number; y: number };
   body?: { x: number; y: number };
@@ -878,11 +882,35 @@ export async function saveSpritesBatchToRTDB(
 /** ================== Character + Atlas Preview ================== */
 
 /**
+ * The frame names a character record stands on, in play order.
+ *
+ * Records reach the library in two shapes: enemies and players carry a flat
+ * `texture` array, while bosses carry named animation sets (`anim.idle`,
+ * `anim.attack`, ...) and no `texture` at all — the level editor publishes
+ * them verbatim from the game JSON, whose schema demands `anim.idle` on a
+ * boss. Preferring `idle` and falling back to any non-empty set mirrors the
+ * editor's own `libraryFrames` helper, so both tools preview a record the
+ * same way.
+ */
+export function characterFrameNames(char: CharacterData | null): string[] {
+  const usable = (v: any): v is string[] =>
+    Array.isArray(v) && v.length > 0 && v.every((s) => typeof s === "string");
+  if (!char) return [];
+  if (usable(char.anim?.idle)) return char.anim!.idle;
+  if (usable(char.texture)) return char.texture;
+  if (char.anim && typeof char.anim === "object") {
+    for (const set of Object.values(char.anim)) if (usable(set)) return set;
+  }
+  return [];
+}
+
+/**
  * Load character preview frames by slicing from its atlas:
  * - Fetch characters/{id}
  * - Fetch atlases/{character.textureKey}
  * - Atlas json may be string or object
- * - Extract frames for each key in character.texture[]
+ * - Extract frames for each name in the record's frame list
+ *   (`anim.idle` for bosses, `texture` otherwise — see characterFrameNames)
  * - Default fps = 6 if interval <= 0 or not set
  */
 export async function loadCharacterPreviewFromAtlas(
@@ -895,7 +923,7 @@ export async function loadCharacterPreviewFromAtlas(
   if (!charSnap.exists()) return null;
   const char = charSnap.val() as CharacterData;
 
-  const textures = Array.isArray(char.texture) ? char.texture : [];
+  const textures = characterFrameNames(char);
   const textureKey = char.textureKey || characterId;
   const frameRate =
     char.interval && char.interval > 0 ? Math.round(1000 / char.interval) : 6;
@@ -957,7 +985,7 @@ export function validateCharacterFrames(
   const missing: string[] = [];
   const atlasFrames =
     atlasJson.frames || atlasJson.textures?.[0]?.frames || {};
-  character.texture.forEach((name) => {
+  characterFrameNames(character).forEach((name) => {
     if (!getAtlasFrameEntry(atlasFrames, name)) missing.push(name);
   });
   return missing;
@@ -994,6 +1022,7 @@ export default {
 
   // Validation
   validateCharacterFrames,
+  characterFrameNames,
 
   // Utils
   hexToRgb,
