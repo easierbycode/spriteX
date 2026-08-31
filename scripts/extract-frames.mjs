@@ -2,8 +2,9 @@
 /**
  * extract-frames.mjs
  *
- * Downloads an atlas from Firebase RTDB, extracts a subset of frames by name,
- * and produces a new tightly-packed atlas PNG + JSON.
+ * Downloads an atlas from Firebase RTDB and extracts a subset of frames by
+ * name, either repacked into a new atlas PNG + JSON or split into one PNG per
+ * frame.
  *
  * Usage:
  *   node scripts/extract-frames.mjs \
@@ -11,12 +12,16 @@
  *     --frames "frame1,frame2,frame3" \
  *     [--gameName <name>] \
  *     [--outDir <dir>] \
- *     [--outName <name>]
+ *     [--outName <name>] \
+ *     [--split]
  *
  * The --frames flag accepts a comma-separated list of frame names.
- * Frame names are matched against both raw keys and decoded hex-encoded keys.
+ * Frame names are matched against both raw keys and decoded hex-encoded keys,
+ * in both the hash and array atlas layouts (see frame-keys.mjs).
  *
- * Output: <outName>.png and <outName>.json in <outDir> (default: downloads/).
+ * Output: <outName>.png and <outName>.json in <outDir> (default: downloads/),
+ * or with --split, one <frameName>.png per frame — each restored to its full
+ * sourceSize, so trimmed frames come back padded to their original dimensions.
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
@@ -66,27 +71,21 @@ function normalizeAtlasJson(jsonVal) {
   }
 }
 
-import { encodeFrameKey, decodeFrameKey, decodeAtlasJsonFrames } from "./frame-keys.mjs";
+import {
+  encodeFrameKey,
+  decodeFrameKey,
+  decodeAtlasJsonFrames,
+  getFrameEntries,
+  drawFrame,
+} from "./frame-keys.mjs";
 export { encodeFrameKey, decodeFrameKey, decodeAtlasJsonFrames };
 
-/** Get the frames map from an atlas JSON (handles both flat and textures[] formats). */
-function getFramesMap(atlasJson) {
-  return atlasJson?.frames ?? atlasJson?.textures?.[0]?.frames ?? null;
-}
+// ─── Frame drawing ───────────────────────────────────────────────────────────
 
-/** Look up a frame by name, trying raw key, decoded key, and encoded key. */
-function findFrame(framesMap, name) {
-  if (!framesMap) return null;
-  // Direct match
-  if (framesMap[name]) return { key: name, data: framesMap[name] };
-  // Try encoded version
-  const encoded = encodeFrameKey(name);
-  if (framesMap[encoded]) return { key: encoded, data: framesMap[encoded] };
-  // Try reverse: iterate and decode
-  for (const [k, v] of Object.entries(framesMap)) {
-    if (decodeFrameKey(k) === name) return { key: k, data: v };
-  }
-  return null;
+/** Frame names double as file names; keep them from escaping the output dir. */
+function frameFileName(name) {
+  const flat = name.replace(/[\\/]+/g, "_").replace(/^\.+/, "_");
+  return flat.toLowerCase().endsWith(".png") ? flat : `${flat}.png`;
 }
 
 // ─── PNG helpers (pure Node, no native deps) ─────────────────────────────────
@@ -105,6 +104,7 @@ async function main() {
   const framesCsv = args.frames;
   const outDir = args.outDir || "downloads";
   const outName = args.outName || (atlasName ? `${atlasName}_extract` : "extract");
+  const split = args.split === "true";
 
   if (!atlasName || !framesCsv) {
     console.error(
@@ -113,7 +113,8 @@ async function main() {
   --frames "frame1,frame2,frame3" \\
   [--gameName <name>] \\
   [--outDir <dir>] \\
-  [--outName <name>]`
+  [--outName <name>] \\
+  [--split]`
     );
     process.exit(1);
   }
@@ -153,19 +154,25 @@ async function main() {
     throw new Error("Could not parse atlas JSON.");
   }
 
-  const framesMap = getFramesMap(atlasJson);
-  if (!framesMap) {
-    throw new Error("Atlas JSON has no frames map.");
+  const entries = getFrameEntries(atlasJson);
+  if (entries.length === 0) {
+    throw new Error("Atlas JSON has no frames.");
   }
 
   // ── Match requested frames ─────────────────────────────────────────────────
 
+  // Index once rather than re-flattening the atlas per requested frame.
+  // Readable names win over raw k_-hex keys, matching findFrameEntry.
+  const byKey = new Map();
+  for (const e of entries) if (!byKey.has(e.rawKey)) byKey.set(e.rawKey, e);
+  for (const e of entries) byKey.set(e.name, e);
+
   const matched = [];
   const missing = [];
   for (const name of requestedFrames) {
-    const found = findFrame(framesMap, name);
+    const found = byKey.get(decodeFrameKey(name)) ?? byKey.get(name) ?? null;
     if (found) {
-      matched.push({ requestedName: name, ...found });
+      matched.push({ requestedName: name, key: found.rawKey, data: found.data });
     } else {
       missing.push(name);
     }
@@ -182,6 +189,45 @@ async function main() {
 
   const srcPngBuffer = decodeBase64Png(atlas.png);
   const srcImage = await loadImage(srcPngBuffer);
+
+  const outputDirectory = path.resolve(outDir);
+  await mkdir(outputDirectory, { recursive: true });
+
+  // ── --split: one PNG per frame, no atlas ───────────────────────────────────
+
+  if (split) {
+    const written = [];
+    for (const m of matched) {
+      const f = m.data.frame;
+      // Restore the untrimmed image: a trimmed frame is placed back at its
+      // spriteSourceSize offset inside a canvas of the original sourceSize.
+      const offset = m.data.spriteSourceSize ?? { x: 0, y: 0 };
+      const size = m.data.sourceSize ?? { w: f.w, h: f.h };
+      const canvas = createCanvas(Math.max(1, size.w), Math.max(1, size.h));
+      drawFrame(canvas.getContext("2d"), srcImage, m.data, offset.x ?? 0, offset.y ?? 0);
+      const file = path.join(outputDirectory, frameFileName(m.requestedName));
+      await writeFile(file, canvas.toBuffer("image/png"));
+      written.push({ frame: m.requestedName, file, size: { w: size.w, h: size.h } });
+    }
+
+    console.log(
+      JSON.stringify(
+        {
+          atlasName,
+          gameName: gameName || null,
+          rtdbPath,
+          split: true,
+          outDir: outputDirectory,
+          extractedFrames: written.map((w) => w.frame),
+          missingFrames: missing,
+          files: written,
+        },
+        null,
+        2
+      )
+    );
+    return;
+  }
 
   // ── Pack extracted frames into a new atlas ─────────────────────────────────
 
@@ -228,8 +274,7 @@ async function main() {
   const ctx = canvas.getContext("2d");
 
   for (const p of placements) {
-    const sf = p.srcData.frame;
-    ctx.drawImage(srcImage, sf.x, sf.y, sf.w, sf.h, p.destX, p.destY, p.w, p.h);
+    drawFrame(ctx, srcImage, p.srcData, p.destX, p.destY);
   }
 
   // ── Build new atlas JSON ───────────────────────────────────────────────────
@@ -259,9 +304,6 @@ async function main() {
   };
 
   // ── Write output files ─────────────────────────────────────────────────────
-
-  const outputDirectory = path.resolve(outDir);
-  await mkdir(outputDirectory, { recursive: true });
 
   const pngFilePath = path.join(outputDirectory, `${outName}.png`);
   const jsonFilePath = path.join(outputDirectory, `${outName}.json`);

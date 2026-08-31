@@ -56,7 +56,7 @@ function parseArgs(argv) {
 
 // ─── frame-key + atlas JSON helpers (in sync with atlasManager.ts) ───────────
 
-import { encodeFrameKey, decodeFrameKey } from "./frame-keys.mjs";
+import { encodeFrameKey, decodeFrameKey, getFrameEntries, drawFrame } from "./frame-keys.mjs";
 export { encodeFrameKey, decodeFrameKey };
 
 function normalizeAtlasJson(jsonVal) {
@@ -76,10 +76,6 @@ function normalizeAtlasJson(jsonVal) {
       return JSON.parse(str);
     } catch { return null; }
   }
-}
-
-function getFramesMap(atlasJson) {
-  return atlasJson?.frames ?? atlasJson?.textures?.[0]?.frames ?? null;
 }
 
 function decodeBase64Png(raw) {
@@ -151,7 +147,7 @@ function collectRuntimeUsage(assetUsage) {
 
 class AtlasIndex {
   constructor() {
-    /** atlasRef ("name" or "game/name") → { name, gameName, json, frameLookup: Map<decodedName, rawKey> } */
+    /** atlasRef ("name" or "game/name") → { name, gameName, json, frames: Map<decodedName, frameData> } */
     this.atlases = new Map();
     this.checked = new Set();
   }
@@ -167,24 +163,23 @@ class AtlasIndex {
     } catch {
       return null;
     }
-    const framesMap = getFramesMap(json);
-    if (!framesMap || typeof framesMap !== "object") return null;
-    const frameLookup = new Map();
-    for (const [raw, val] of Object.entries(framesMap)) {
+    const frames = new Map();
+    for (const { name: frameName, data } of getFrameEntries(json)) {
       // Catalog atlases may contain stray non-frame entries (e.g. "comment"
       // strings); only index entries with real frame rects.
-      if (typeof val?.frame?.x !== "number") continue;
-      frameLookup.set(decodeFrameKey(raw), raw);
+      if (typeof data?.frame?.x !== "number") continue;
+      frames.set(frameName, data);
     }
-    const entry = { name, gameName, json, framesMap, frameLookup };
+    if (frames.size === 0) return null;
+    const entry = { name, gameName, json, frames };
     this.atlases.set(ref, entry);
     return entry;
   }
 
   findFrame(frameName) {
     for (const entry of this.atlases.values()) {
-      const raw = entry.frameLookup.get(frameName);
-      if (raw != null) return { entry, rawKey: raw, data: entry.framesMap[raw] };
+      const data = entry.frames.get(frameName);
+      if (data != null) return { entry, data };
     }
     return null;
   }
@@ -267,7 +262,7 @@ export async function optimizeGameAtlas(options) {
     await index.addCandidate(name);
   }
 
-  let resolved = new Map(); // frameName → { entry, rawKey, data }
+  let resolved = new Map(); // frameName → { entry, data }
   const resolveAll = () => {
     resolved = new Map();
     const unresolved = [];
@@ -400,7 +395,8 @@ export async function optimizeGameAtlas(options) {
   const ctx = canvas.getContext("2d");
   const frames = {};
   for (const p of placements) {
-    ctx.drawImage(p.draw.image, p.draw.sx, p.draw.sy, p.w, p.h, p.x, p.y, p.w, p.h);
+    if (p.srcData) drawFrame(ctx, p.draw.image, p.srcData, p.x, p.y);
+    else ctx.drawImage(p.draw.image, p.draw.sx, p.draw.sy, p.w, p.h, p.x, p.y, p.w, p.h);
     frames[p.name] = {
       frame: { x: p.x, y: p.y, w: p.w, h: p.h },
       rotated: false,

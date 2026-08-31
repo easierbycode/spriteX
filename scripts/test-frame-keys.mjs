@@ -2,15 +2,24 @@
 /**
  * test-frame-keys.mjs
  *
- * Round-trip checks for the hex frame-key encoding shared by
- * scripts/frame-keys.mjs (used by extract-frames / download-atlas /
- * optimize-atlas) and src/atlasManager.ts / src/main.ts.
+ * Checks for scripts/frame-keys.mjs: the hex frame-key encoding shared with
+ * src/atlasManager.ts / src/main.ts, plus the layout helpers that let
+ * extract-frames / download-atlas / optimize-atlas read either atlas frame
+ * shape (hash map or TexturePacker array).
  *
  * Usage: npm test
  */
 
 import assert from "node:assert/strict";
-import { decodeFrameKey, encodeFrameKey, decodeAtlasJsonFrames } from "./frame-keys.mjs";
+import {
+  decodeFrameKey,
+  encodeFrameKey,
+  decodeAtlasJsonFrames,
+  getFrameEntries,
+  listFrameNames,
+  findFrameEntry,
+  drawFrame,
+} from "./frame-keys.mjs";
 
 // Astral characters (emoji, U+10000+) must round-trip. They encode as two
 // 4-hex-digit UTF-16 surrogate groups; the old per-code-point encoding
@@ -79,5 +88,64 @@ assert.equal(
   "hit0.gif",
   "array-form filename was not decoded"
 );
+
+// ── frame layout helpers ─────────────────────────────────────────────────────
+// Regression for the evil_invaders_game_asset bug: a TexturePacker "Phaser 3"
+// export stores frames as an ARRAY keyed by each entry's `filename`. Reading
+// `.frames` as a map yields the array indices ("0", "1", …), so no real frame
+// name ever matches and every lookup misses.
+const arrayAtlas = {
+  textures: [
+    {
+      frames: [
+        { filename: "hexagram0.png", frame: { x: 0, y: 0, w: 12, h: 16 } },
+        { filename: encodeFrameKey("evilEye2.png"), frame: { x: 12, y: 0, w: 46, h: 44 } },
+      ],
+    },
+  ],
+};
+assert.deepEqual(listFrameNames(arrayAtlas), ["hexagram0.png", "evilEye2.png"]);
+assert.equal(findFrameEntry(arrayAtlas, "hexagram0.png").data.frame.w, 12);
+// k_-hex filenames resolve by their readable name, and by the raw stored key.
+assert.equal(findFrameEntry(arrayAtlas, "evilEye2.png").data.frame.w, 46);
+assert.equal(findFrameEntry(arrayAtlas, encodeFrameKey("evilEye2.png")).name, "evilEye2.png");
+assert.equal(findFrameEntry(arrayAtlas, "nope.png"), null);
+
+// Hash form keeps working, and reports the raw key alongside the decoded name.
+const hashAtlas = { frames: { [encodeFrameKey("boss.0.png")]: { frame: { x: 1, y: 2, w: 3, h: 4 } } } };
+assert.deepEqual(listFrameNames(hashAtlas), ["boss.0.png"]);
+assert.equal(findFrameEntry(hashAtlas, "boss.0.png").rawKey, encodeFrameKey("boss.0.png"));
+
+// Multi-texture JSON contributes every page; junk shapes are skipped, not thrown on.
+assert.deepEqual(
+  listFrameNames({ textures: [{ frames: [{ filename: "a.png", frame: {} }] }, { frames: { "b.png": {} } }] }),
+  ["a.png", "b.png"]
+);
+assert.deepEqual(getFrameEntries(null), []);
+assert.deepEqual(listFrameNames({ frames: [{ noFilename: true }, null, 7] }), []);
+
+// ── drawFrame ────────────────────────────────────────────────────────────────
+// A rotated frame is stored as an (h x w) region and must be blitted back
+// upright; an unrotated one is a straight copy.
+const calls = [];
+const stubCtx = {
+  save: () => calls.push(["save"]),
+  restore: () => calls.push(["restore"]),
+  translate: (x, y) => calls.push(["translate", x, y]),
+  rotate: (r) => calls.push(["rotate", r]),
+  drawImage: (...a) => calls.push(["drawImage", ...a]),
+};
+drawFrame(stubCtx, "img", { frame: { x: 5, y: 6, w: 10, h: 20 } }, 100, 200);
+assert.deepEqual(calls, [["drawImage", "img", 5, 6, 10, 20, 100, 200, 10, 20]]);
+
+calls.length = 0;
+drawFrame(stubCtx, "img", { rotated: true, frame: { x: 5, y: 6, w: 10, h: 20 } }, 100, 200);
+assert.deepEqual(calls, [
+  ["save"],
+  ["translate", 100, 220],
+  ["rotate", -Math.PI / 2],
+  ["drawImage", "img", 5, 6, 20, 10, 0, 0, 20, 10],
+  ["restore"],
+]);
 
 console.log("frame-key tests passed");

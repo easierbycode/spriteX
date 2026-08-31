@@ -24,6 +24,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { optimizeGameAtlas, decodeFrameKey } from "../scripts/optimize-atlas.mjs";
+import { listFrameNames } from "../scripts/frame-keys.mjs";
 
 const DATABASE_URL = "https://evil-invaders-default-rtdb.firebaseio.com";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -148,14 +149,13 @@ server.registerTool(
   async ({ atlas, game }) => {
     const rtdbPath = game ? `games/${game}/atlases/${atlas}` : `atlases/${atlas}`;
     const json = normalizeAtlasJson(await fetchJson(`${rtdbPath}/json`));
-    const framesMap = json?.frames ?? json?.textures?.[0]?.frames;
-    if (!framesMap) {
+    const frames = listFrameNames(json).sort();
+    if (frames.length === 0) {
       return fail(
         `No atlas JSON found at ${rtdbPath}. Use spritex_list_atlases to see valid names` +
           (game ? " (or drop 'game' to search the global catalog)." : ".")
       );
     }
-    const frames = Object.keys(framesMap).map(decodeFrameKey).sort();
     return ok({ atlas, game: game ?? null, frameCount: frames.length, size: json?.meta?.size ?? null, frames });
   }
 );
@@ -183,22 +183,27 @@ server.registerTool(
 server.registerTool(
   "spritex_extract_frames",
   {
-    title: "Extract frames into a new atlas",
+    title: "Extract frames from an atlas",
     description:
-      "Extract a named subset of frames from a spriteX atlas and repack them into a new atlas PNG + JSON on disk. Use spritex_list_frames first to get exact frame names.",
+      "Extract a named subset of frames from a spriteX atlas to disk: repacked into a new atlas PNG + JSON, or with split=true one PNG per frame (restored to its untrimmed size). Use spritex_list_frames first to get exact frame names.",
     inputSchema: {
       atlas: z.string().describe("Source atlas name"),
       frames: z.array(z.string()).min(1).describe("Frame names to extract (readable names, e.g. 'player00.gif')"),
       game: gameParam,
       outDir: z.string().optional().describe("Output directory (default: <spriteX>/downloads)"),
-      outName: z.string().optional().describe("Output atlas name (default: <atlas>_extract)"),
+      outName: z.string().optional().describe("Output atlas name (default: <atlas>_extract); ignored when split is true"),
+      split: z
+        .boolean()
+        .optional()
+        .describe("Write one PNG per frame (named after the frame) instead of a packed atlas"),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ atlas, frames, game, outDir, outName }) => {
+  async ({ atlas, frames, game, outDir, outName, split }) => {
     const args = ["--atlasName", atlas, "--frames", frames.join(","), "--outDir", outDir ?? DEFAULT_OUT_DIR];
     if (game) args.push("--gameName", game);
     if (outName) args.push("--outName", outName);
+    if (split) args.push("--split");
     return ok(await runScript("extract-frames.mjs", args));
   }
 );

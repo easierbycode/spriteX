@@ -34,6 +34,11 @@ Standard texture atlas format with:
 - `frames` map: `{ "frameName": { frame: {x,y,w,h}, rotated, trimmed, spriteSourceSize, sourceSize } }`
 - `meta`: `{ app, version, image, format, size: {w,h}, scale }`
 - Frame keys may be hex-encoded (`k_` prefix) for Firebase RTDB compatibility
+- **Two frame layouts exist.** Besides the hash map above, TexturePacker's
+  "Phaser 3" export writes an array: `{ textures: [{ frames: [{ filename, frame, … }] }] }`
+  (e.g. `evil_invaders_game_asset`). Never index `.frames` directly — read it via
+  `getFrameEntries` / `listFrameNames` / `findFrameEntry` / `drawFrame` in
+  `scripts/frame-keys.mjs`, or an array-form atlas reports its frames as `"0"`, `"1"`, …
 
 ## CLI Tools
 
@@ -45,10 +50,12 @@ node scripts/download-atlas.mjs --atlasName <name> [--gameName <name>] [--outDir
 
 ### Extract specific frames
 ```bash
-node scripts/extract-frames.mjs --atlasName <name> --frames "f1,f2,f3" [--gameName <name>] [--outDir <dir>] [--outName <name>]
+node scripts/extract-frames.mjs --atlasName <name> --frames "f1,f2,f3" [--gameName <name>] [--outDir <dir>] [--outName <name>] [--split]
 ```
 - Fetches atlas from RTDB, extracts named frames, packs into new atlas
 - Output: new PNG + JSON in outDir
+- `--split` = one `<frameName>.png` per frame instead of a packed atlas, each restored to its
+  untrimmed `sourceSize`
 
 ### Build a game's optimized atlas
 ```bash
@@ -66,7 +73,7 @@ node scripts/optimize-atlas.mjs --gameName <name> [--source static|usage|both] [
 - Needs the Phaser namespace: auto-detects `globalThis.Phaser`, or `SpriteXPlugin.install(Phaser)` / plugin data `{ phaser }`
 
 ## MCP Server
-`mcp/server.mjs` (stdio, `@modelcontextprotocol/sdk`), registered in `.mcp.json`. Tools: `spritex_list_games`, `spritex_list_atlases`, `spritex_list_frames`, `spritex_download_atlas`, `spritex_extract_frames`, `spritex_optimize_game_atlas` (the optimizer above; `list`/`save` flags), `spritex_get_usage_report`.
+`mcp/server.mjs` (stdio, `@modelcontextprotocol/sdk`), registered in `.mcp.json`. Tools: `spritex_list_games`, `spritex_list_atlases`, `spritex_list_frames`, `spritex_download_atlas`, `spritex_extract_frames` (`split` flag for one PNG per frame), `spritex_optimize_game_atlas` (the optimizer above; `list`/`save` flags), `spritex_get_usage_report`.
 
 ## Build
 ```bash

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { decodeAtlasJsonFrames, decodeFrameKey } from "./frame-keys.mjs";
+import { decodeAtlasJsonFrames, listFrameNames } from "./frame-keys.mjs";
 
 const DATABASE_URL = "https://evil-invaders-default-rtdb.firebaseio.com";
 
@@ -45,13 +45,6 @@ function normalizeAtlasJson(jsonVal) {
       return JSON.parse(str);
     } catch { return null; }
   }
-}
-
-/** List all frame names in an atlas JSON object. */
-function listFrameNames(atlasJson) {
-  const framesMap = atlasJson?.frames ?? atlasJson?.textures?.[0]?.frames;
-  if (!framesMap || typeof framesMap !== "object") return [];
-  return Object.keys(framesMap).map(decodeFrameKey);
 }
 
 async function main() {
