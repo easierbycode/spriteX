@@ -12,11 +12,15 @@
  *                                 the assets the game actually uses, from
  *                                 static game data + runtime usage reports)
  *   spritex_get_usage_report    — runtime usage recorded by the Phaser plugin
+ *   spritex_list_fonts          — bitmap fonts published under /fonts (meta + sizes only)
+ *   spritex_get_font            — one font's RetroFont config + meta; outDir also
+ *                                 writes its TTF, sheet PNG and config to disk
  *
  * Registered for this repo via .mcp.json; run manually with:
  *   node mcp/server.mjs
  */
 
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -32,12 +36,29 @@ const DEFAULT_OUT_DIR = path.join(REPO_ROOT, "downloads");
 
 /** ─── helpers ──────────────────────────────────────────────────────────── */
 
-async function fetchJson(rtdbPath) {
-  const res = await fetch(`${DATABASE_URL}/${rtdbPath}.json`);
+async function fetchJson(rtdbPath, { shallow = false } = {}) {
+  const res = await fetch(`${DATABASE_URL}/${rtdbPath}.json${shallow ? "?shallow=true" : ""}`);
   if (!res.ok) {
     throw new Error(`RTDB request failed (${res.status} ${res.statusText}) for ${rtdbPath}`);
   }
   return res.json();
+}
+
+/**
+ * Byte length of a leaf's JSON body without downloading it. Firebase rejects
+ * HEAD, so read Content-Length off a GET and drop the stream — base64 sheets
+ * and TTFs run to megabytes and a listing only needs their size. identity
+ * encoding keeps the header at the raw length (fetch asks for gzip otherwise).
+ */
+async function fetchLeafLength(rtdbPath) {
+  const controller = new AbortController();
+  const res = await fetch(`${DATABASE_URL}/${rtdbPath}.json`, {
+    headers: { "accept-encoding": "identity" },
+    signal: controller.signal,
+  });
+  const length = res.headers.get("content-length");
+  controller.abort();
+  return res.ok && length != null ? Number(length) : null;
 }
 
 function normalizeAtlasJson(jsonVal) {
@@ -50,6 +71,11 @@ function normalizeAtlasJson(jsonVal) {
   } catch {
     return null;
   }
+}
+
+/** Base64 leaf → bytes. Sheets carry a data:image/png;base64, prefix; TTFs are bare. */
+function decodeBase64(raw) {
+  return Buffer.from(raw.replace(/^data:[^,]*;base64,/, ""), "base64");
 }
 
 function ok(payload) {
@@ -280,6 +306,117 @@ server.registerTool(
         frameMap && typeof frameMap === "object" ? Object.keys(frameMap).map(decodeFrameKey).sort() : [];
     }
     return ok({ game, lastUpdated, textureCount: Object.keys(textures).length, textures });
+  }
+);
+
+server.registerTool(
+  "spritex_list_fonts",
+  {
+    title: "List spriteX fonts",
+    description:
+      "List the bitmap fonts published under /fonts/*: glyph cell size, character order, TrueType glyph count, " +
+      "provenance, and whether a TTF is present. Reads each font's meta plus leaf sizes only — never the sheet or TTF bodies.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  async () => {
+    const res = await fetch(`${DATABASE_URL}/fonts.json?shallow=true`);
+    if (!res.ok) return fail(`RTDB request failed (${res.status}) for fonts`);
+    const data = await res.json();
+    const families = data && typeof data === "object" ? Object.keys(data).sort() : [];
+    const fonts = await Promise.all(
+      families.map(async (family) => {
+        const [meta, leaves] = await Promise.all([
+          fetchJson(`fonts/${family}/meta`),
+          fetchJson(`fonts/${family}`, { shallow: true }),
+        ]);
+        const chars = typeof meta?.chars === "string" ? meta.chars : null;
+        let pngBytes = 0;
+        if (leaves?.png === true) {
+          // The body is the quoted data-URL string; base64 never needs escaping,
+          // so minus the quotes is the string's length. Report the decoded PNG
+          // size (3/4 of the base64 after the data: prefix) so it lines up with
+          // spritex_get_font's sizes.png rather than the stored string length.
+          const bodyLength = await fetchLeafLength(`fonts/${family}/png`);
+          pngBytes = bodyLength == null
+            ? null
+            : Math.max(0, Math.floor((bodyLength - 2 - "data:image/png;base64,".length) * 3 / 4));
+        }
+        return {
+          family,
+          cell: meta?.cell ?? null,
+          chars: chars == null ? null : { length: chars.length, head: chars.slice(0, 40) },
+          charSet: meta?.charSet ?? null,
+          glyphs: meta?.glyphs ?? null,
+          source: meta?.source ?? null,
+          exportedAt: meta?.exportedAt ?? null,
+          hasTtf: leaves?.ttf === true,
+          pngBytes,
+        };
+      })
+    );
+    return ok({ count: fonts.length, fonts });
+  }
+);
+
+server.registerTool(
+  "spritex_get_font",
+  {
+    title: "Get a spriteX font",
+    description:
+      "Read one bitmap font from /fonts/{family}: its Phaser RetroFont config, meta, and decoded PNG/TTF byte sizes. " +
+      "Give outDir to also write <family>.ttf, <family>.png and <family>.retrofont.js there and return the paths. " +
+      "Base64 bodies are never returned inline. Use spritex_list_fonts for valid family names.",
+    inputSchema: {
+      family: z.string().describe("Font family name, e.g. 'athenaFont' (the key under /fonts)"),
+      outDir: z
+        .string()
+        .optional()
+        .describe("Output directory (relative paths resolve against the spriteX repo); omit to write no files"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ family, outDir }) => {
+    // The family is both the RTDB key and an output filename: anything but a
+    // plain identifier could walk the URL to another node ("../atlases/x") or
+    // the files out of outDir. Same rule scripts/export-font.mjs publishes by.
+    if (!/^[\w-]+$/.test(family)) {
+      return fail(`Font family must be a plain identifier (letters, digits, _ or -), got ${JSON.stringify(family)}.`);
+    }
+    const rtdbPath = `fonts/${family}`;
+    const record = await fetchJson(rtdbPath);
+    if (!record || typeof record !== "object") {
+      return fail(`No font found at ${rtdbPath}. Use spritex_list_fonts to see valid names.`);
+    }
+    const json = typeof record.json === "string" ? record.json : null;
+    const png = typeof record.png === "string" ? decodeBase64(record.png) : null;
+    const ttf = typeof record.ttf === "string" ? decodeBase64(record.ttf) : null;
+    let files = null;
+    if (outDir) {
+      const dir = path.resolve(REPO_ROOT, outDir);
+      await mkdir(dir, { recursive: true });
+      files = { ttf: null, png: null, retrofont: null };
+      if (ttf) {
+        files.ttf = path.join(dir, `${family}.ttf`);
+        await writeFile(files.ttf, ttf);
+      }
+      if (png) {
+        files.png = path.join(dir, `${family}.png`);
+        await writeFile(files.png, png);
+      }
+      if (json != null) {
+        files.retrofont = path.join(dir, `${family}.retrofont.js`);
+        await writeFile(files.retrofont, json.endsWith("\n") ? json : `${json}\n`, "utf8");
+      }
+    }
+    return ok({
+      family,
+      rtdbPath,
+      json,
+      meta: record.meta ?? null,
+      sizes: { png: png?.length ?? 0, ttf: ttf?.length ?? 0 },
+      files,
+    });
   }
 );
 

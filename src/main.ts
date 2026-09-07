@@ -12,6 +12,7 @@ import {
   loadCharacterPreviewFromAtlas,
   fetchAllCharacters,
   fetchAllAtlases,
+  fetchAllFonts,
   fetchAllSprites,
   fetchAtlas,
   fetchCharacter,
@@ -2792,6 +2793,11 @@ async function populateAtlasSelect() {
     select.disabled = true;
 
     try {
+        // fonts/* only feeds the FONT dropdown (and carries base64 TTFs), so
+        // fetch it alongside but never gate the atlas list on it: the atlas
+        // dropdown fills as soon as its own fetch lands, and fetchAllFonts
+        // already resolves to {} on error.
+        const fontsPromise = fetchAllFonts();
         const atlases = await fetchAllAtlases();
         select.innerHTML = "";
 
@@ -2810,9 +2816,10 @@ async function populateAtlasSelect() {
         select.disabled = false;
 
         // Keep the PACKER tab's atlas dropdowns and the VIEW › FONT sheet list
-        // in sync with the same fetch (font sheets live under atlases/* too).
+        // in sync with the same fetch (font sheets live under atlases/* too,
+        // alongside the promoted fonts/* families).
         setPackerAtlasNames(Object.keys(atlases));
-        setFontSheetNames(atlases);
+        setFontSheetNames(atlases, await fontsPromise);
     } catch (err) {
         select.innerHTML = "";
         const opt = document.createElement("option");

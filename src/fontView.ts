@@ -5,14 +5,23 @@
  * the EXTRACT tab's Font Builder saves the packed glyph sheet as the PNG and
  * a Phaser RetroFont config (a JS object literal, not JSON) as the "json".
  * Older font sheets (goldFont, scoreNumbers, …) were saved as plain atlases
- * whose frame order is the glyph order.
+ * whose frame order is the glyph order. Promoted fonts live under RTDB
+ * `fonts/{family}`: the same glyph sheet + RetroFont config, plus a traced
+ * TTF and provenance meta, and never any frames.
  *
- * This view previews either kind: glyphs are sliced from the atlas frames
+ * This view previews every kind: glyphs are sliced from the atlas frames
  * (variable-width, one glyph per frame) or from a fixed RetroFont grid
  * (exactly what Phaser's ParseRetroFont does), mapped onto a character set,
  * and rendered as sample text at an integer pixel scale.
  */
-import { fetchAtlas } from "./atlasManager";
+import { fetchAtlas, fetchFont } from "./atlasManager";
+
+/**
+ * Dropdown values for `fonts/*` records carry this prefix so a family and an
+ * atlas of the same name (athenaFont exists as both) stay distinguishable;
+ * atlas values are the bare name, which openFontSheet callers rely on.
+ */
+const FONT_PREFIX = "fonts/";
 
 /** Phaser.GameObjects.RetroFont.TEXT_SET* — glyph order for grid sheets. */
 export const RETRO_FONT_CHAR_SETS: Record<string, string> = {
@@ -111,6 +120,8 @@ function unescapeLiteral(s: string): string {
 /* ───────────────────────────── state ───────────────────────────── */
 
 type GlyphSource = "frames" | "grid";
+/** RTDB node the loaded sheet came from. */
+type SheetSource = "fonts" | "atlases";
 
 interface Glyph {
   ch: string;
@@ -136,7 +147,9 @@ let deps: FontDeps = {
   downloadDataUrl: () => {},
 };
 
+/** Bare atlas name or font family — it names downloads, never the RTDB path. */
 let sheetName = "";
+let sheetSource: SheetSource = "atlases";
 let sheetImg: HTMLImageElement | null = null;
 let sheetJson: any = null;
 let sheetConfig: RetroFontConfig | null = null;
@@ -147,24 +160,28 @@ let loadGen = 0;
 /* ─────────────────────────── dropdown ─────────────────────────── */
 
 /**
- * Fill the font dropdown from the atlases record the VIEW tab already
- * fetched. Sheets that are obviously fonts (Font Builder config, or a name
- * containing "font") are grouped first; any atlas can still be opened as a
- * font, since older sheets are plain atlases.
+ * Fill the font dropdown from the atlases (and fonts) records the VIEW tab
+ * already fetched. Promoted `fonts/*` families come first, then sheets that
+ * are obviously fonts (Font Builder config, or a name containing "font"); any
+ * atlas can still be opened as a font, since older sheets are plain atlases.
  */
-export function setFontSheetNames(atlases: Record<string, { json?: unknown }>) {
+export function setFontSheetNames(
+  atlases: Record<string, { json?: unknown }>,
+  fonts: Record<string, unknown> = {}
+) {
   const select = $("fontSelect") as HTMLSelectElement | null;
   if (!select) return;
   const prev = select.value;
 
-  const fonts: string[] = [];
+  const families = Object.keys(fonts).sort((a, b) => a.localeCompare(b));
+  const sheets: string[] = [];
   const others: string[] = [];
   Object.keys(atlases)
     .sort((a, b) => a.localeCompare(b))
     .forEach((name) => {
       const looksLikeFont =
         /font/i.test(name) || isRetroFontConfigText(atlases[name]?.json);
-      (looksLikeFont ? fonts : others).push(name);
+      (looksLikeFont ? sheets : others).push(name);
     });
 
   select.innerHTML = "";
@@ -173,23 +190,24 @@ export function setFontSheetNames(atlases: Record<string, { json?: unknown }>) {
   placeholder.textContent = "-- Select a font sheet --";
   select.appendChild(placeholder);
 
-  const addGroup = (label: string, names: string[]) => {
+  const addGroup = (label: string, names: string[], prefix = "") => {
     if (!names.length) return;
     const group = document.createElement("optgroup");
     group.label = label;
     names.forEach((name) => {
       const opt = document.createElement("option");
-      opt.value = name;
+      opt.value = prefix + name;
       opt.textContent = name;
       group.appendChild(opt);
     });
     select.appendChild(group);
   };
-  addGroup("FONT SHEETS", fonts);
+  addGroup("FONTS - fonts/*", families, FONT_PREFIX);
+  addGroup("FONT SHEETS", sheets);
   addGroup("OTHER ATLASES", others);
 
   select.disabled = false;
-  if (prev && atlases[prev]) select.value = prev;
+  if (prev && [...select.options].some((o) => o.value === prev)) select.value = prev;
 }
 
 /* ───────────────────────────── loading ─────────────────────────── */
@@ -255,11 +273,13 @@ export async function openFontSheet(name: string) {
   await loadFontSheet(name);
 }
 
-async function loadFontSheet(name: string) {
+/** `value` is a dropdown value: `fonts/<family>` or a bare atlas name. */
+async function loadFontSheet(value: string) {
   const gen = ++loadGen;
   const note = $("fontGlyphNote");
-  if (!name) {
+  if (!value) {
     sheetName = "";
+    sheetSource = "atlases";
     sheetImg = null;
     sheetJson = null;
     sheetConfig = null;
@@ -269,7 +289,9 @@ async function loadFontSheet(name: string) {
   }
 
   if (note) note.textContent = "LOADING…";
-  const data = await fetchAtlas(name);
+  const isFont = value.startsWith(FONT_PREFIX);
+  const name = isFont ? value.slice(FONT_PREFIX.length) : value;
+  const data = isFont ? await fetchFont(name) : await fetchAtlas(name);
   if (gen !== loadGen) return;
   if (!data?.png) {
     if (note) note.textContent = "FAILED TO LOAD FONT SHEET";
@@ -289,11 +311,39 @@ async function loadFontSheet(name: string) {
   if (gen !== loadGen) return;
 
   sheetName = name;
+  sheetSource = isFont ? "fonts" : "atlases";
   sheetImg = img;
   sheetConfig = isRetroFontConfigText(data.json)
     ? parseRetroFontConfigText(data.json as string)
     : null;
-  sheetJson = sheetConfig ? null : data.json;
+  // A fonts/* record is a RetroFont grid by contract; its json is never frames.
+  // Should its config literal ever fail to parse, meta still describes the
+  // grid, so seed the config from it rather than guessing a square cell.
+  if (isFont && !sheetConfig) {
+    const meta = (data as { meta?: { cell?: { w?: number; h?: number }; chars?: unknown; charSet?: unknown } }).meta;
+    const w = Number(meta?.cell?.w), h = Number(meta?.cell?.h);
+    if (w > 0 && h > 0) {
+      const charSet = typeof meta?.charSet === "string" && RETRO_FONT_CHAR_SETS[meta.charSet] ? meta.charSet : null;
+      sheetConfig = {
+        image: name,
+        width: w,
+        height: h,
+        chars: charSet
+          ? RETRO_FONT_CHAR_SETS[charSet]
+          : typeof meta?.chars === "string" && meta.chars
+            ? meta.chars
+            : RETRO_FONT_CHAR_SETS.TEXT_SET3,
+        charSet,
+        charsPerRow: null,
+        offsetX: 0,
+        offsetY: 0,
+        spacingX: 0,
+        spacingY: 0,
+        lineSpacing: 0,
+      };
+    }
+  }
+  sheetJson = sheetConfig || isFont ? null : data.json;
 
   applySheetDefaults();
   render();
@@ -453,15 +503,16 @@ function render() {
   const loaded = !!sheetImg;
   ($("downloadFontSampleBtn") as HTMLButtonElement | null)?.toggleAttribute("disabled", !loaded || !glyphs.length);
   ($("downloadFontConfigBtn") as HTMLButtonElement | null)?.toggleAttribute("disabled", !loaded || !glyphs.length);
-  // A Font Builder sheet carries no frames, so the ATLAS view has nothing to slice.
+  // A fonts/* record or a Font Builder sheet carries no frames, so the ATLAS
+  // view has nothing to slice.
   ($("fontOpenAtlasBtn") as HTMLButtonElement | null)?.toggleAttribute(
     "disabled",
-    !loaded || frameEntries(sheetJson).length === 0
+    !loaded || sheetSource === "fonts" || frameEntries(sheetJson).length === 0
   );
 
   if (loaded) {
     deps.setStatus(
-      `VIEW · FONT ${sheetName} · ${glyphs.length} GLYPH${glyphs.length === 1 ? "" : "S"} · ${
+      `VIEW · FONT ${sheetName} (${sheetSource}/*) · ${glyphs.length} GLYPH${glyphs.length === 1 ? "" : "S"} · ${
         glyphSource === "grid" ? "GRID" : "FRAMES"
       }`
     );
@@ -716,7 +767,9 @@ export function initFontView(d: Partial<FontDeps>) {
   $("downloadFontConfigBtn")?.addEventListener("click", downloadConfig);
 
   $("fontOpenAtlasBtn")?.addEventListener("click", () => {
-    if (!sheetName) return;
+    // sheetName is a bare name, so a fonts/* family must never be sent to the
+    // atlas dropdown — it could alias an unrelated atlas (athenaFont is both).
+    if (!sheetName || sheetSource === "fonts") return;
     const atlasSelect = $("atlasSelect") as HTMLSelectElement | null;
     if (!atlasSelect) return;
     atlasSelect.value = sheetName;

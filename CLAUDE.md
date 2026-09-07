@@ -8,14 +8,14 @@ spriteX is a browser-based sprite atlas builder and manager for the Evil Invader
 - **`src/atlasManager.ts`** — Core atlas logic: Firebase CRUD, sprite detection, atlas packing, frame key encoding
 - **`src/tilemapEditor.ts`** — TILEMAP tab: Tiled JSON map upload (map + tileset JSON + tileset PNG), layer rendering, tile/object editing, undo, RTDB tilemaps/* save/load
 - **`src/gamepad.ts`** — App-wide gamepad support: virtual cursor, synthesized clicks, tab switching, tilemap grid-mode bindings
-- **`src/fontView.ts`** — VIEW › FONT mode: previews a bitmap font sheet (Font Builder RetroFont config or a plain atlas whose frame order is the glyph order) as sample text; slices glyphs from atlas frames or a fixed RetroFont grid, exports a RetroFont config / char→frame map
+- **`src/fontView.ts`** — VIEW › FONT mode: font picker lists published `fonts/*` families first, then atlas sheets; previews a bitmap font sheet (Font Builder RetroFont config or a plain atlas whose frame order is the glyph order) as sample text; slices glyphs from atlas frames or a fixed RetroFont grid, exports a RetroFont config / char→frame map
 - **`src/firebase-config.ts`** — Firebase initialization and DB exports
 - **`src/phaser-plugin/spritexPlugin.ts`** — SpriteXPlugin: Phaser 3 global plugin (live asset loading from RTDB, runtime usage tracking, optimized atlas creation). Built to `dist/plugin/` (ESM + IIFE)
 - **`scripts/download-atlas.mjs`** — CLI: download full atlas from RTDB
 - **`scripts/extract-frames.mjs`** — CLI: extract subset of frames into new atlas PNG+JSON
 - **`scripts/optimize-atlas.mjs`** — CLI: build a game's optimized atlas (only the assets it actually uses, from static game data + runtime usage reports)
 - **`scripts/canvas-shim.mjs`** — Node.js canvas wrapper (@napi-rs/canvas)
-- **`mcp/server.mjs`** — spriteX MCP server (stdio; registered via `.mcp.json`): list/download/extract atlas tools plus `spritex_optimize_game_atlas` and `spritex_get_usage_report`
+- **`mcp/server.mjs`** — spriteX MCP server (stdio; registered via `.mcp.json`): list/download/extract atlas tools plus `spritex_optimize_game_atlas`, `spritex_get_usage_report` and the `/fonts` tools (`spritex_list_fonts`, `spritex_get_font`)
 
 ## Firebase RTDB Structure
 ```
@@ -28,7 +28,13 @@ spriteX is a browser-based sprite atlas builder and manager for the Evil Invader
 /tilemaps/{name}/json      — Tiled map JSON (stringified)
 /tilemaps/{name}/tileset   — External tileset JSON (stringified, optional)
 /tilemaps/{name}/png       — Tileset image as data URL
+/fonts/{family}/family     — The key repeated (a plain identifier: letters, digits, _ or -)
+/fonts/{family}/png        — Glyph sheet as data URL (RetroFont grid, one cell per char in meta.chars order)
+/fonts/{family}/json       — Phaser RetroFont config literal (a JS object literal string, NOT JSON)
+/fonts/{family}/ttf        — TrueType traced from the sheet, base64 (no data: prefix)
+/fonts/{family}/meta       — { cell:{w,h}, chars, charSet, glyphs, source, exportedAt }
 ```
+- Font Builder still saves its sheets to `atlases/*` (png + RetroFont config as `json`); `/fonts/*` is the published form written by `scripts/export-font.mjs --publish`
 
 ## Atlas JSON Format
 Standard texture atlas format with:
@@ -68,12 +74,15 @@ node scripts/optimize-atlas.mjs --gameName <name> [--source static|usage|both] [
 
 ### Export a Font Builder sheet as a TrueType font
 ```bash
-node scripts/export-font.mjs --atlasName <name> [--gameName <name>] [--outDir <dir>] [--family <name>]
+node scripts/export-font.mjs (--atlasName <name> [--gameName <name>] | --fontName <name>) [--outDir <dir>] [--family <name>] [--no-files] [--publish [--source <text>]]
 ```
 - Only for Font Builder records (json = a RetroFont config literal, PNG = the glyph grid); frame atlases are rejected
 - Traces every opaque pixel of every cell into OpenType outlines (`opentype.js`), so the pixel font works anywhere a CSS `font-family` does — DOM, canvas, Phaser text styles
 - One em = one cell width: at `font-size: 16px` a 16×12 sheet is pixel-exact, at 8px each glyph advances one 8 px cell; lowercase maps onto the uppercase glyphs
 - Writes `<family>.ttf`, the sheet as `<family>.png` and the config as `<family>.retrofont.js` (default outDir `downloads/fonts`)
+- `--fontName` = read an already-published `/fonts/{name}` record instead of an atlas (`--gameName` only applies to atlases)
+- `--publish` = write `/fonts/{family}` (png + json + ttf + meta); `--source <text>` = provenance note kept as `meta.source`; `--no-files` = skip the local files (publish only)
+- Example: `node scripts/export-font.mjs --atlasName athenaFont --publish --source "Dezaemon 2 disc GFONT.BIN font 0"`
 - shmupX.github.io's game runtime ships `athenaFont` this way (`static/games/2028-ai/assets/fonts/`): Dezaemon 2's own 8×8 game font, published to `atlases/athenaFont` from the disc's `GFONT.BIN` (font 0, TEXT_SET1 order)
 
 ## Phaser Plugin (SpriteXPlugin)
@@ -84,7 +93,7 @@ node scripts/export-font.mjs --atlasName <name> [--gameName <name>] [--outDir <d
 - Needs the Phaser namespace: auto-detects `globalThis.Phaser`, or `SpriteXPlugin.install(Phaser)` / plugin data `{ phaser }`
 
 ## MCP Server
-`mcp/server.mjs` (stdio, `@modelcontextprotocol/sdk`), registered in `.mcp.json`. Tools: `spritex_list_games`, `spritex_list_atlases`, `spritex_list_frames`, `spritex_download_atlas`, `spritex_extract_frames` (`split` flag for one PNG per frame), `spritex_optimize_game_atlas` (the optimizer above; `list`/`save` flags), `spritex_get_usage_report`.
+`mcp/server.mjs` (stdio, `@modelcontextprotocol/sdk`), registered in `.mcp.json`. Tools: `spritex_list_games`, `spritex_list_atlases`, `spritex_list_frames`, `spritex_download_atlas`, `spritex_extract_frames` (`split` flag for one PNG per frame), `spritex_optimize_game_atlas` (the optimizer above; `list`/`save` flags), `spritex_get_usage_report`, `spritex_list_fonts` (meta + sizes only), `spritex_get_font` (`outDir` also writes the TTF, sheet PNG and RetroFont config).
 
 ## Build
 ```bash

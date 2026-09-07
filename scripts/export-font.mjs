@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 /**
- * Export a Font Builder sheet from RTDB as a TrueType font.
+ * Export a pixel font sheet from RTDB as a TrueType font, and optionally
+ * publish it as a fonts/{family} record.
  *
- *   node scripts/export-font.mjs --atlasName silverFont [--outDir downloads/fonts]
- *                                [--family silverFont] [--gameName <game>]
+ *   node scripts/export-font.mjs --atlasName silverFont [--gameName <game>]
+ *   node scripts/export-font.mjs --fontName athenaFont
+ *       [--outDir downloads/fonts] [--family <name>] [--no-files]
+ *       [--publish [--source <text>]]
  *
- * A Font Builder record under atlases/{name} holds the glyph sheet PNG and a
- * Phaser RetroFont config ({ width, height, chars: TEXT_SETn }). This traces
- * every opaque pixel of every glyph cell into rectangles and writes them as
- * OpenType outlines, so the pixel font can be used anywhere a CSS font-family
- * is — canvas text, Phaser text styles, DOM — with no bitmap-font code.
+ * The sheet comes from a Font Builder record under atlases/{name} (or a game's
+ * atlases) or from an already-published fonts/{name} record; both hold the
+ * glyph sheet PNG and a Phaser RetroFont config ({ width, height, chars:
+ * TEXT_SETn }). This traces every opaque pixel of every glyph cell into
+ * rectangles and writes them as OpenType outlines, so the pixel font can be
+ * used anywhere a CSS font-family is — canvas text, Phaser text styles, DOM —
+ * with no bitmap-font code.
  *
  * Metrics: one em = the cell width in glyph pixels (16 for a 16×12 sheet), so
  * at a CSS font-size equal to the cell width every glyph pixel is exactly one
@@ -19,7 +24,10 @@
  * no lowercase of its own, so mixed-case strings still render in the font.
  *
  * Outputs: <family>.ttf, <family>.png (the sheet) and <family>.retrofont.js
- * (the config) in outDir.
+ * (the config) in outDir, unless --no-files. --publish PUTs the sheet, the
+ * config, the TTF (base64) and a meta block (cell size, resolved chars, glyph
+ * count, provenance) to fonts/{family}, so the app and the game load the font
+ * from one place instead of each re-tracing the sheet.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -44,15 +52,21 @@ const TEXT_SETS = {
   TEXT_SET11: "ABCDEFGHIJKLMNOPQRSTUVWXYZ.,\"-+!?()':;0123456789",
 };
 
+const USAGE = "Usage: node scripts/export-font.mjs (--atlasName <name> [--gameName <game>] | --fontName <name>) [--family <name>] [--outDir <dir>] [--no-files] [--publish [--source <text>]]";
+
 function parseArgs(argv) {
-  const out = { outDir: "downloads/fonts" };
+  const out = { outDir: "downloads/fonts", files: true, publish: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i];
     if (a === "--atlasName") out.atlasName = next();
+    else if (a === "--fontName") out.fontName = next();
     else if (a === "--gameName") out.gameName = next();
     else if (a === "--outDir") out.outDir = next();
     else if (a === "--family") out.family = next();
+    else if (a === "--source") out.source = next();
+    else if (a === "--publish") out.publish = true;
+    else if (a === "--no-files") out.files = false;
     else if (a === "--help" || a === "-h") out.help = true;
   }
   return out;
@@ -66,32 +80,45 @@ export function parseRetroFontConfig(text) {
   };
   const set = text.match(/\bchars\s*:\s*(?:Phaser\.GameObjects\.RetroFont\.)?(TEXT_SET\d+)/);
   const str = text.match(/\bchars\s*:\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/);
-  const chars = set && TEXT_SETS[set[1]]
-    ? TEXT_SETS[set[1]]
+  // charSet is the named set only when it actually resolved the order; a
+  // literal string or the TEXT_SET3 fallback reports null.
+  const charSet = set && TEXT_SETS[set[1]] ? set[1] : null;
+  const chars = charSet
+    ? TEXT_SETS[charSet]
     : str
       ? (str[1] ?? str[2] ?? "").replace(/\\(.)/g, "$1")
       : TEXT_SETS.TEXT_SET3;
   const width = num("width");
   const height = num("height");
   if (!width || !height) throw new Error("RetroFont config needs width and height");
-  return { width, height, chars, charsPerRow: num("charsPerRow") };
+  return { width, height, chars, charSet, charsPerRow: num("charsPerRow") };
 }
 
-async function fetchRecord(atlasName, gameName) {
-  const base = gameName
-    ? `${RTDB}/games/${encodeURIComponent(gameName)}/atlases/${encodeURIComponent(atlasName)}`
-    : `${RTDB}/atlases/${encodeURIComponent(atlasName)}`;
-  const res = await fetch(`${base}.json`);
-  if (!res.ok) throw new Error(`RTDB ${res.status} for ${base}`);
+/** Where the sheet lives: a Font Builder atlas (optionally a game's) or a published font. */
+function recordPath({ atlasName, fontName, gameName }) {
+  if (fontName) return `fonts/${fontName}`;
+  return gameName ? `games/${gameName}/atlases/${atlasName}` : `atlases/${atlasName}`;
+}
+
+const encodePath = (p) => p.split("/").map(encodeURIComponent).join("/");
+
+async function fetchRecord(rtdbPath) {
+  const res = await fetch(`${RTDB}/${encodePath(rtdbPath)}.json`);
+  if (!res.ok) throw new Error(`RTDB ${res.status} for ${rtdbPath}`);
   const rec = await res.json();
-  if (!rec || !rec.png) throw new Error(`No record at ${base}`);
+  if (!rec || !rec.png) throw new Error(`No record at ${rtdbPath}`);
   const json = typeof rec.json === "string" ? rec.json : JSON.stringify(rec.json ?? "");
   if (!/\bchars\s*:/.test(json)) {
-    throw new Error(`${atlasName} is not a Font Builder sheet (no RetroFont config); frame atlases are not supported yet`);
+    throw new Error(`${rtdbPath} is not a Font Builder sheet (no RetroFont config); frame atlases are not supported yet`);
   }
   const png = Buffer.from(String(rec.png).replace(/^data:image\/png;base64,/, ""), "base64");
-  return { png, config: json };
+  // A fonts/* record carries provenance in meta; hand it back so a re-publish
+  // keeps it instead of stamping the self-referential "fonts/{name}".
+  return { png, config: json, meta: rec.meta ?? null };
 }
+
+/** The family is the RTDB key (no . # $ / [ ]) and a CSS font-family name. */
+const FAMILY_RE = /^[\w-]+$/;
 
 /**
  * Trace one glyph cell into an OpenType path: each horizontal run of opaque
@@ -173,28 +200,89 @@ export async function buildFont({ png, config, family }) {
   return { font, cfg, glyphCount: glyphs.length - 1 };
 }
 
+/**
+ * The fonts/{family} record: sheet, config and TTF side by side so each
+ * consumer picks the form it renders with, plus meta describing the grid
+ * without having to re-parse the config literal.
+ */
+export function buildFontRecord({ family, png, config, ttf, font, cfg, source }) {
+  return {
+    family,
+    png: `data:image/png;base64,${png.toString("base64")}`,
+    json: config,
+    ttf: ttf.toString("base64"),
+    meta: {
+      cell: { w: cfg.width, h: cfg.height },
+      chars: cfg.chars,
+      charSet: cfg.charSet,
+      glyphs: font.glyphs.length - 1, // .notdef is not a character
+      source,
+      exportedAt: new Date().toISOString(),
+    },
+  };
+}
+
+async function publishFont(record) {
+  if (!FAMILY_RE.test(record.family)) {
+    throw new Error(`family ${JSON.stringify(record.family)} is not a plain identifier; pass --family <letters, digits, _ or ->`);
+  }
+  const url = `${RTDB}/fonts/${encodeURIComponent(record.family)}.json`;
+  const body = JSON.stringify(record);
+  const res = await fetch(url, { method: "PUT", headers: { "Content-Type": "application/json" }, body });
+  if (!res.ok) throw new Error(`RTDB ${res.status} publishing ${url}`);
+  return { url, bytes: Buffer.byteLength(body) };
+}
+
 async function main() {
   const args = parseArgs(process.argv);
-  if (args.help || !args.atlasName) {
-    console.log("Usage: node scripts/export-font.mjs --atlasName <name> [--gameName <game>] [--outDir <dir>] [--family <name>]");
-    process.exit(args.help ? 0 : 1);
+  if (args.help) {
+    console.log(USAGE);
+    process.exit(0);
   }
-  const family = args.family || args.atlasName;
-  const { png, config } = await fetchRecord(args.atlasName, args.gameName);
+  if (!args.atlasName === !args.fontName) {
+    console.error("Give exactly one of --atlasName or --fontName");
+    console.log(USAGE);
+    process.exit(1);
+  }
+  if (args.fontName && args.gameName) {
+    console.error("--gameName only applies to --atlasName; fonts/* are not per game");
+    process.exit(1);
+  }
+  const family = args.family || args.atlasName || args.fontName;
+  if (args.publish && !FAMILY_RE.test(family)) {
+    // Fail before the fetch and the trace: publishFont would refuse it anyway.
+    console.error(`family ${JSON.stringify(family)} is not a plain identifier; pass --family <letters, digits, _ or ->`);
+    process.exitCode = 1;
+    return;
+  }
+  const rtdbPath = recordPath(args);
+  const { png, config, meta } = await fetchRecord(rtdbPath);
   const { font, cfg, glyphCount } = await buildFont({ png, config, family });
+  const ttf = Buffer.from(font.toArrayBuffer());
+  const order = cfg.charSet ? `${cfg.charSet} ` : "";
+  console.log(`${family}: ${glyphCount} glyphs from ${cfg.width}x${cfg.height} cells (${order}${JSON.stringify(cfg.chars)})`);
 
-  fs.mkdirSync(args.outDir, { recursive: true });
-  const ttfPath = path.join(args.outDir, `${family}.ttf`);
-  fs.writeFileSync(ttfPath, Buffer.from(font.toArrayBuffer()));
-  fs.writeFileSync(path.join(args.outDir, `${family}.png`), png);
-  fs.writeFileSync(path.join(args.outDir, `${family}.retrofont.js`), config.endsWith("\n") ? config : config + "\n");
-  console.log(`${family}: ${glyphCount} glyphs from ${cfg.width}x${cfg.height} cells (${JSON.stringify(cfg.chars)})`);
-  console.log(`wrote ${ttfPath} (${fs.statSync(ttfPath).size} bytes), ${family}.png, ${family}.retrofont.js`);
+  if (args.files) {
+    fs.mkdirSync(args.outDir, { recursive: true });
+    const ttfPath = path.join(args.outDir, `${family}.ttf`);
+    fs.writeFileSync(ttfPath, ttf);
+    fs.writeFileSync(path.join(args.outDir, `${family}.png`), png);
+    fs.writeFileSync(path.join(args.outDir, `${family}.retrofont.js`), config.endsWith("\n") ? config : config + "\n");
+    console.log(`wrote ${ttfPath} (${ttf.length} bytes), ${family}.png, ${family}.retrofont.js`);
+  }
+  if (args.publish) {
+    const source = args.source || (meta && typeof meta.source === "string" && meta.source) || rtdbPath;
+    const record = buildFontRecord({ family, png, config, ttf, font, cfg, source });
+    const { url, bytes } = await publishFont(record);
+    console.log(`published ${url} (${bytes} bytes: png ${png.length}, ttf ${ttf.length})`);
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((err) => {
     console.error(err.message || err);
-    process.exit(1);
+    // Not process.exit(): on Windows it races the fetch socket still closing
+    // and libuv aborts with exit 127 instead of our 1.
+    process.exitCode = 1;
   });
 }

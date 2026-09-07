@@ -46,6 +46,27 @@ export interface AtlasData {
   png: string; // DataURL with prefix
 }
 
+/**
+ * RTDB `fonts/{family}`: a bitmap font promoted out of `atlases/*`. `json` is
+ * the Phaser RetroFont config as a JS object literal string — never JSON, so
+ * it must not go through normalizeAtlasJson — and `ttf` is the traced
+ * TrueType, base64 without a data: prefix.
+ */
+export interface FontRecord {
+  family?: string;
+  png: string; // DataURL with prefix
+  json: string;
+  ttf?: string;
+  meta?: {
+    cell?: { w: number; h: number };
+    chars?: string;
+    charSet?: string | null;
+    glyphs?: number;
+    source?: string;
+    exportedAt?: string;
+  };
+}
+
 export interface SpriteData {
   name: string;
   png: string; // base64 (may or may not have prefix depending on your DB)
@@ -150,6 +171,32 @@ export async function fetchAtlas(atlasKey: string): Promise<AtlasData | null> {
     return { json: parsedJson ?? val?.json ?? null, png: val?.png } as AtlasData;
   } catch (error) {
     console.error(`Error fetching atlas ${atlasKey}:`, error);
+    return null;
+  }
+}
+
+export async function fetchAllFonts(): Promise<Record<string, FontRecord>> {
+  const db = getDB();
+  try {
+    const snapshot = await get(ref(db, "fonts"));
+    return snapshot.exists()
+      ? (snapshot.val() as Record<string, FontRecord>)
+      : {};
+  } catch (error) {
+    console.error("Error fetching fonts:", error);
+    return {};
+  }
+}
+
+export async function fetchFont(family: string): Promise<FontRecord | null> {
+  const db = getDB();
+  try {
+    const snapshot = await get(ref(db, `fonts/${family}`));
+    // Returned as stored: the json is a RetroFont config literal, not an
+    // atlas, so there are no frame keys to decode or JSON to normalize.
+    return snapshot.exists() ? (snapshot.val() as FontRecord) : null;
+  } catch (error) {
+    console.error(`Error fetching font ${family}:`, error);
     return null;
   }
 }
@@ -999,6 +1046,8 @@ export default {
   fetchCharacter,
   fetchAtlas,
   fetchAllAtlases,
+  fetchAllFonts,
+  fetchFont,
   fetchAllSprites,
   saveCharacter,
   saveAtlas,
