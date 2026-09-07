@@ -66,6 +66,16 @@ node scripts/optimize-atlas.mjs --gameName <name> [--source static|usage|both] [
 - Frames resolve against game atlases, hinted atlases, then a JSON-only scan of the whole catalog
 - `--list` = dry-run report; `--save` publishes to `/games/{name}/atlases/{outName}`
 
+### Export a Font Builder sheet as a TrueType font
+```bash
+node scripts/export-font.mjs --atlasName <name> [--gameName <name>] [--outDir <dir>] [--family <name>]
+```
+- Only for Font Builder records (json = a RetroFont config literal, PNG = the glyph grid); frame atlases are rejected
+- Traces every opaque pixel of every cell into OpenType outlines (`opentype.js`), so the pixel font works anywhere a CSS `font-family` does — DOM, canvas, Phaser text styles
+- One em = one cell width: at `font-size: 16px` a 16×12 sheet is pixel-exact, at 8px each glyph advances one 8 px cell; lowercase maps onto the uppercase glyphs
+- Writes `<family>.ttf`, the sheet as `<family>.png` and the config as `<family>.retrofont.js` (default outDir `downloads/fonts`)
+- shmupX.github.io's game runtime ships `athenaFont` this way (`static/games/2028-ai/assets/fonts/`): Dezaemon 2's own 8×8 game font, published to `atlases/athenaFont` from the disc's `GFONT.BIN` (font 0, TEXT_SET1 order)
+
 ## Phaser Plugin (SpriteXPlugin)
 `src/phaser-plugin/spritexPlugin.ts` → `dist/plugin/spritex-phaser-plugin.js` (ESM) and `.iife.js` (`window.SpriteXPlugin`). Zero deps; talks to RTDB over REST. Register as a Phaser global plugin with data `{ gameName, liveLoad, trackUsage, autoSaveUsage, useOptimizedAtlas }`:
 - **Live loading**: `load.image(key)` / `load.spritesheet(key, null, frameConfig)` / `load.atlas(key)` without URLs fetch from RTDB (`/sprites`, `/atlases`, `/games/{g}/atlases`); `spritex://<rtdb-path>` URLs always intercept

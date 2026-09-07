@@ -4,7 +4,20 @@
     {
       "name": "spritex",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["http-server", "dist", "-c-1"],
+      "runtimeArgs": [
+        "http-server",
+        "dist",
+        "-c-1"
+      ],
+      "autoPort": true
+    },
+    {
+      "name": "shmupx-site",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "cd /d C:/CODE/shmupX.github.io && deno task dev:vite --port %PORT% --strictPort"
+      ],
       "autoPort": true
     }
   ]
