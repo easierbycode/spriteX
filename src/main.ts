@@ -738,6 +738,37 @@ function renderSelectedThumbs() {
   }
 }
 
+/**
+ * Reading order for free-form detected sprites: rows top-to-bottom, then
+ * left-to-right within a row. A row is a band of vertically overlapping
+ * rects, so glyphs whose tops differ by a pixel (overshoot, descenders)
+ * still share a row. Sorting by x first — the old behaviour — interleaves
+ * the rows column by column, which is how silverFont's glyphs (three rows:
+ * A–P, Q–Z, 0–9) ended up packed as 0 A Q R B 1 2 C D E S 3 T …
+ */
+function sortByReadingOrder<T>(
+  items: T[],
+  rectOf: (item: T) => { x: number; y: number; w: number; h: number }
+): T[] {
+  const byTop = items
+    .map((item) => ({ item, r: rectOf(item) }))
+    .sort((a, b) => a.r.y - b.r.y || a.r.x - b.r.x);
+  const rows: { bottom: number; members: typeof byTop }[] = [];
+  for (const entry of byTop) {
+    const row = rows[rows.length - 1];
+    const centerY = entry.r.y + entry.r.h / 2;
+    if (row && centerY < row.bottom) {
+      row.members.push(entry);
+      row.bottom = Math.max(row.bottom, entry.r.y + entry.r.h);
+    } else {
+      rows.push({ bottom: entry.r.y + entry.r.h, members: [entry] });
+    }
+  }
+  return rows.flatMap((row) =>
+    row.members.sort((a, b) => a.r.x - b.r.x || a.r.y - b.r.y).map((e) => e.item)
+  );
+}
+
 function getSortedSelectedIndices(): number[] {
   const arr = [...selected];
   if (gridActive) {
@@ -746,14 +777,10 @@ function getSortedSelectedIndices(): number[] {
     arr.sort((a, b) => a - b);
     return arr;
   }
-  arr.sort((a, b) => {
-    const sa = detected[a];
-    const sb = detected[b];
-    if (!sa || !sb) return a - b;
-    if (sa.x !== sb.x) return sa.x - sb.x;
-    return sa.y - sb.y;
-  });
-  return arr;
+  // Indices with no detected rect (stale selection) trail in index order.
+  const placed = arr.filter((i) => !!detected[i]);
+  const stale = arr.filter((i) => !detected[i]).sort((a, b) => a - b);
+  return [...sortByReadingOrder(placed, (i) => detected[i]), ...stale];
 }
 
 function getSmallestSelectedDimensions(): { w: number; h: number } {
@@ -1029,17 +1056,14 @@ function getSelectedRenderUnits(): RenderUnit[] {
     visited.add(idx);
   }
 
-  units.sort((a, b) => {
-    if (gridActive) {
-      // Reading order for grid cells: top-to-bottom rows, left-to-right.
-      if (a.rect.y !== b.rect.y) return a.rect.y - b.rect.y;
-      return a.rect.x - b.rect.x;
-    }
-    if (a.rect.x !== b.rect.x) return a.rect.x - b.rect.x;
-    return a.rect.y - b.rect.y;
-  });
-
-  return units;
+  if (gridActive) {
+    // Reading order for grid cells: top-to-bottom rows, left-to-right.
+    units.sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x);
+    return units;
+  }
+  // Joined groups take their composite rect, so a group sits in the row
+  // its combined bounds fall into.
+  return sortByReadingOrder(units, (u) => u.rect);
 }
 
 function createSplitIcon(axis: "h" | "v", parts: number): HTMLCanvasElement {
