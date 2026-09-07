@@ -26,6 +26,12 @@ import {
   type SpriteData,
 } from "./atlasManager";
 import { initPackerTab, setPackerAtlasNames } from "./packerTab";
+import {
+  initFontView,
+  setFontSheetNames,
+  openFontSheet,
+  isRetroFontConfigText,
+} from "./fontView";
 import { wireFileDrop, isImageFile, blockStrayFileDrops } from "./fileDrop";
 import { initTilemapEditor, initTilemapGameBridge } from "./tilemapEditor";
 import { initGamepad } from "./gamepad";
@@ -2779,8 +2785,10 @@ async function populateAtlasSelect() {
 
         select.disabled = false;
 
-        // Keep the PACKER tab's atlas dropdowns in sync with the same fetch.
+        // Keep the PACKER tab's atlas dropdowns and the VIEW › FONT sheet list
+        // in sync with the same fetch (font sheets live under atlases/* too).
         setPackerAtlasNames(Object.keys(atlases));
+        setFontSheetNames(atlases);
     } catch (err) {
         select.innerHTML = "";
         const opt = document.createElement("option");
@@ -2808,6 +2816,12 @@ async function loadAtlasAndPreview() {
     }
 
     const { png: dataURL, json } = atlasData;
+    // A Font Builder sheet stores a RetroFont config instead of frames, so the
+    // atlas view has nothing to slice — hand it to the FONT view instead.
+    if (isRetroFontConfigText(json)) {
+        await openFontSheet(id);
+        return;
+    }
     await applyAtlasPreview(dataURL, json, { selectAllFrames: true, startPreviewNow: true });
 }
 
@@ -4331,6 +4345,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupTheme();
   wireUI();
   initPackerTab();
+  initFontView({
+    setStatus: setStatusLine,
+    downloadFile,
+    downloadDataUrl: (url, filename, type) => {
+      triggerDownload(url, filename, type);
+    },
+  });
   setupPWA();
   initTilemapEditor({ downloadFile, setStatus: setStatusLine });
   initTilemapGameBridge();

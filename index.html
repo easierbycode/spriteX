@@ -331,7 +331,7 @@
       .pad-y { color: #fffbe0; border: 1px solid rgba(255,244,150,.55); background: radial-gradient(circle at 35% 30%, #fff7b0, #b89b1e 55%, #2e2503); }
 
       /* inputs */
-      input[type="text"], input[type="url"], input[type="number"], select {
+      input[type="text"], input[type="url"], input[type="number"], select, textarea {
         padding: 6px 10px;
         border: 1px solid rgba(140,255,110,.4);
         background: rgba(8,20,10,.75);
@@ -341,7 +341,8 @@
         font-size: 13px; letter-spacing: .08em;
         min-width: 0;
       }
-      input:focus, select:focus { outline: none; border-color: rgba(246,255,74,.6); }
+      input:focus, select:focus, textarea:focus { outline: none; border-color: rgba(246,255,74,.6); }
+      textarea { resize: vertical; line-height: 1.4; }
       select option { background: #0a120b; color: var(--sx-label); }
       input[type="file"] {
         color: var(--sx-green-dim); font-family: inherit; font-size: 12px; max-width: 220px;
@@ -580,6 +581,36 @@
         box-shadow: 0 0 22px rgba(246,255,74,.12);
       }
       #atlasPreviewImg:not([src]), #atlasPreviewImg[src=""] { display: none; }
+
+      /* VIEW › FONT */
+      #fontSheetImg {
+        max-width: 100%;
+        border: 1px solid var(--sx-yellow-line);
+        border-radius: 8px;
+        padding: 10px;
+        background: var(--sx-checker-sm);
+        background-size: 16px 16px;
+        box-shadow: 0 0 22px rgba(246,255,74,.12);
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+      }
+      #fontSheetImg:not([src]), #fontSheetImg[src=""] { display: none; }
+      #fontSampleCanvas { image-rendering: pixelated; image-rendering: crisp-edges; max-width: none; }
+      .font-glyphs { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-end; }
+      .font-glyph {
+        display: flex; flex-direction: column; align-items: center; gap: 4px;
+        min-width: 30px; padding: 6px 5px 4px;
+        border: 1px solid var(--sx-line); border-radius: 7px;
+        background: var(--sx-checker-sm); background-size: 8px 8px;
+      }
+      .font-glyph canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+      .font-glyph span {
+        font-size: 11px; letter-spacing: .1em; color: var(--sx-yellow);
+        background: rgba(0,0,0,.55); padding: 0 4px; border-radius: 4px; line-height: 16px;
+      }
+      .font-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+      .font-field > span:first-child { font-size: 11px; letter-spacing: .14em; color: var(--sx-green-dim); }
+      .font-field input, .font-field select { width: 100%; padding: 4px 6px; }
 
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
       .subtitle {
@@ -964,6 +995,28 @@
             </div>
             <div id="atlasFramesContainer">Atlas not loaded yet.</div>
           </div>
+          <!-- font view -->
+          <div id="viewFontMain" style="flex:1;overflow:auto;padding:20px 24px;display:none;flex-direction:column;gap:18px;background:var(--sx-checker)">
+            <div style="font-size:12px;letter-spacing:.22em;color:rgba(156,255,107,.55)">SAMPLE TEXT</div>
+            <div class="row">
+              <div id="fontSampleContainer" class="preview-container bg-checkered" style="min-height:64px;padding:14px;max-width:100%;overflow:auto;justify-content:flex-start">
+                <canvas id="fontSampleCanvas" width="1" height="1" style="display:none"></canvas>
+                <span id="fontSampleEmpty" class="sx-note" style="color:rgba(156,255,107,.55)">PICK A FONT SHEET</span>
+              </div>
+            </div>
+            <div class="row" style="align-items:center;gap:12px">
+              <div style="font-size:12px;letter-spacing:.22em;color:rgba(156,255,107,.55)">GLYPHS — <span id="fontGlyphCount">0</span> MAPPED</div>
+              <span id="fontGlyphNote" class="sx-note"></span>
+            </div>
+            <div id="fontGlyphsContainer" class="font-glyphs">Font not loaded yet.</div>
+            <div class="row" style="align-items:center;gap:12px">
+              <div style="font-size:12px;letter-spacing:.22em;color:rgba(156,255,107,.55)">FONT SHEET</div>
+              <span id="fontSheetDims" class="sx-note" style="color:rgba(156,255,107,.55)"></span>
+            </div>
+            <div class="row">
+              <img id="fontSheetImg" alt="Font Sheet" />
+            </div>
+          </div>
           <!-- character view -->
           <div id="viewCharMain" style="flex:1;display:none;align-items:center;justify-content:center;padding:20px">
             <div id="characterPreviewContainer" class="preview-container bg-checkered" style="width:min(560px,90%);aspect-ratio:1/1;max-height:100%">
@@ -984,6 +1037,7 @@
             <span class="sx-dock-title">VIEW</span>
             <span style="margin-left:auto;display:flex;gap:6px">
               <button id="viewModeAtlasBtn" class="btn sx-mode active">ATLAS</button>
+              <button id="viewModeFontBtn" class="btn sx-mode">FONT</button>
               <button id="viewModeCharBtn" class="btn sx-mode">CHARACTER</button>
               <button id="viewModeSpriteBtn" class="btn sx-mode">SPRITE</button>
             </span>
@@ -1032,6 +1086,84 @@
                 <button id="downloadAtlasTmxBtn" class="btn" disabled title="Export Tiled tile map (.tmx)">🗺 TMX</button>
               </div>
               <button id="downloadAtlasAllBtn" class="btn primary" disabled title="Download atlas PNG + JSON + TMX">⬇ ALL — PNG + JSON + TMX</button>
+            </div>
+          </div>
+
+          <!-- font dock -->
+          <div id="viewFontDock" style="display:none;flex-direction:column;flex:1;min-height:0">
+            <div class="sx-dock-body" style="flex:1 1 auto;overflow-y:auto">
+              <select id="fontSelect">
+                <option value="">-- Select a font sheet --</option>
+              </select>
+              <textarea id="fontSampleInput" rows="2" placeholder="SAMPLE TEXT (Enter = new line)" spellcheck="false">HELLO WORLD
+0123456789</textarea>
+              <div class="sx-dock-section" style="margin:0;padding-top:12px">
+                <span>GLYPHS</span>
+                <span style="margin-left:auto;display:flex;gap:6px">
+                  <button id="fontSourceFramesBtn" class="btn sx-mode active" title="One glyph per atlas frame, in frame order (variable width)">FRAMES</button>
+                  <button id="fontSourceGridBtn" class="btn sx-mode" title="Fixed-size cells walked left-to-right, top-to-bottom — Phaser RetroFont">GRID</button>
+                </span>
+              </div>
+              <div class="row">
+                <label for="fontCharsetSelect" class="subtitle">CHARS</label>
+                <select id="fontCharsetSelect" style="flex:1" title="Character order the glyphs map onto (Phaser RetroFont TEXT_SET*)">
+                  <option value="TEXT_SET3" selected>TEXT_SET3 · A-Z 0-9 space</option>
+                  <option value="TEXT_SET4">TEXT_SET4 · A-Z space 0-9</option>
+                  <option value="TEXT_SET8">TEXT_SET8 · 0-9 space . A-Z</option>
+                  <option value="TEXT_SET10">TEXT_SET10 · A-Z</option>
+                  <option value="TEXT_SET5">TEXT_SET5 · A-Z .,/() '!?-*: 0-9</option>
+                  <option value="TEXT_SET6">TEXT_SET6 · A-Z !?:; 0-9 "(),-.' space</option>
+                  <option value="TEXT_SET9">TEXT_SET9 · A-Z ()- 0-9 .:,'"?!</option>
+                  <option value="TEXT_SET11">TEXT_SET11 · A-Z .,"-+!?()':; 0-9</option>
+                  <option value="TEXT_SET7">TEXT_SET7 · interleaved AGMSY…</option>
+                  <option value="TEXT_SET2">TEXT_SET2 · ASCII space…Z</option>
+                  <option value="TEXT_SET1">TEXT_SET1 · full ASCII</option>
+                  <option value="custom">CUSTOM…</option>
+                </select>
+              </div>
+              <input id="fontCharsInput" type="text" placeholder="CUSTOM CHARS, IN GLYPH ORDER" spellcheck="false" style="display:none" />
+              <div id="fontGridFields" style="display:none;grid-template-columns:repeat(4,1fr);gap:6px">
+                <label class="font-field"><span>CELL W</span><input id="fontGlyphWInput" type="number" min="1" value="16" /></label>
+                <label class="font-field"><span>CELL H</span><input id="fontGlyphHInput" type="number" min="1" value="16" /></label>
+                <label class="font-field" title="0 = fit as many as the sheet width allows"><span>PER ROW</span><input id="fontPerRowInput" type="number" min="0" value="0" /></label>
+                <label class="font-field"><span>&nbsp;</span><span class="sx-note" style="min-height:0;font-size:11px">0 = AUTO</span></label>
+                <label class="font-field"><span>OFF X</span><input id="fontOffsetXInput" type="number" min="0" value="0" /></label>
+                <label class="font-field"><span>OFF Y</span><input id="fontOffsetYInput" type="number" min="0" value="0" /></label>
+                <label class="font-field"><span>GAP X</span><input id="fontSpacingXInput" type="number" min="0" value="0" /></label>
+                <label class="font-field"><span>GAP Y</span><input id="fontSpacingYInput" type="number" min="0" value="0" /></label>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+                <label class="font-field"><span>SCALE</span>
+                  <select id="fontScaleSelect">
+                    <option value="1">1x</option>
+                    <option value="2">2x</option>
+                    <option value="3">3x</option>
+                    <option value="4" selected>4x</option>
+                    <option value="6">6x</option>
+                    <option value="8">8x</option>
+                  </select>
+                </label>
+                <label class="font-field" title="Extra pixels between glyphs"><span>TRACKING</span><input id="fontLetterSpacingInput" type="number" value="0" /></label>
+                <label class="font-field" title="Extra pixels between lines"><span>LEADING</span><input id="fontLineSpacingInput" type="number" value="0" /></label>
+              </div>
+              <div class="sx-dock-section">
+                <span>RTDB — atlases/*</span>
+                <span style="margin-left:auto;display:flex;gap:8px">
+                  <button id="fontBgBtn" class="btn" title="Toggle background">BG</button>
+                  <button id="fontFullscreenBtn" class="btn" title="Fullscreen">⛶</button>
+                </span>
+              </div>
+            </div>
+            <div class="sx-dock-actions" style="margin-top:auto">
+              <button id="fontOpenAtlasBtn" class="sx-action" disabled title="Open this sheet in the ATLAS view to reorder or duplicate glyph frames">
+                <span class="pad-btn pad-x">X</span>
+                <span class="label">OPEN AS ATLAS</span>
+                <span class="meta">frames · anim · extract</span>
+              </button>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                <button id="downloadFontSampleBtn" class="btn" disabled title="Download the sample text as a PNG">SAMPLE PNG</button>
+                <button id="downloadFontConfigBtn" class="btn" disabled title="GRID: Phaser RetroFont config · FRAMES: char → frame map JSON">GLYPH MAP</button>
+              </div>
             </div>
           </div>
 
@@ -1249,7 +1381,7 @@
         var TITLES = { extract: "EXTRACT", view: "VIEW", packer: "PACKER", tilemap: "TILEMAP" };
         var HEADER = {
           extract: "SPRITE SHEET WORKBENCH · EVIL INVADERS",
-          view: "ATLAS · CHARACTER · SPRITE VIEWER · RTDB LIVE",
+          view: "ATLAS · FONT · CHARACTER · SPRITE VIEWER · RTDB LIVE",
           packer: "ATLAS FRAME REPLACER · RTDB LIVE",
           tilemap: "TILED MAP EDITOR · LAYERS · OBJECTS · GAMEPAD READY"
         };
@@ -1261,7 +1393,7 @@
         };
         var STATUS = {
           extract: "EXTRACT · CLICK SPRITES TO SELECT",
-          view: "VIEW · PICK ATLAS, CHARACTER OR SPRITE",
+          view: "VIEW · PICK ATLAS, FONT, CHARACTER OR SPRITE",
           packer: "PACKER · SELECT FRAME TO REPLACE, THEN REPLACEMENTS",
           tilemap: "TILEMAP · LOAD A MAP TO EDIT"
         };
@@ -1315,9 +1447,10 @@
         spriteModeBtn.addEventListener("click", function () { setSheetMode("sprite"); });
         atlasModeBtn.addEventListener("click", function () { setSheetMode("atlas"); });
 
-        // ── view dock: ATLAS / CHARACTER / SPRITE switcher (defaults to atlas) ──
+        // ── view dock: ATLAS / FONT / CHARACTER / SPRITE switcher (defaults to atlas) ──
         var VIEW_MODES = {
           atlas: { btn: "viewModeAtlasBtn", main: "viewAtlasMain", dock: "viewAtlasDock" },
+          font: { btn: "viewModeFontBtn", main: "viewFontMain", dock: "viewFontDock" },
           character: { btn: "viewModeCharBtn", main: "viewCharMain", dock: "viewCharDock" },
           sprite: { btn: "viewModeSpriteBtn", main: "viewSpriteMain", dock: "viewSpriteDock" }
         };

@@ -8,6 +8,7 @@ spriteX is a browser-based sprite atlas builder and manager for the Evil Invader
 - **`src/atlasManager.ts`** — Core atlas logic: Firebase CRUD, sprite detection, atlas packing, frame key encoding
 - **`src/tilemapEditor.ts`** — TILEMAP tab: Tiled JSON map upload (map + tileset JSON + tileset PNG), layer rendering, tile/object editing, undo, RTDB tilemaps/* save/load
 - **`src/gamepad.ts`** — App-wide gamepad support: virtual cursor, synthesized clicks, tab switching, tilemap grid-mode bindings
+- **`src/fontView.ts`** — VIEW › FONT mode: previews a bitmap font sheet (Font Builder RetroFont config or a plain atlas whose frame order is the glyph order) as sample text; slices glyphs from atlas frames or a fixed RetroFont grid, exports a RetroFont config / char→frame map
 - **`src/firebase-config.ts`** — Firebase initialization and DB exports
 - **`src/phaser-plugin/spritexPlugin.ts`** — SpriteXPlugin: Phaser 3 global plugin (live asset loading from RTDB, runtime usage tracking, optimized atlas creation). Built to `dist/plugin/` (ESM + IIFE)
 - **`scripts/download-atlas.mjs`** — CLI: download full atlas from RTDB
