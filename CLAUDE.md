@@ -10,6 +10,7 @@ spriteX is a browser-based sprite atlas builder and manager for the Evil Invader
 - **`src/gamepad.ts`** — App-wide gamepad support: virtual cursor, synthesized clicks, tab switching, tilemap grid-mode bindings
 - **`src/fontView.ts`** — VIEW › FONT mode: font picker lists published `fonts/*` families first, then atlas sheets; previews a bitmap font sheet (Font Builder RetroFont config or a plain atlas whose frame order is the glyph order) as sample text; slices glyphs from atlas frames or a fixed RetroFont grid, exports a RetroFont config / char→frame map
 - **`src/firebase-config.ts`** — Firebase initialization and DB exports
+- **`src/rtdbRoot.ts`** — `rtdbPath()`: puts the page's `window.__RTDB_ROOT__` in front of the catalog nodes (see below)
 - **`src/phaser-plugin/spritexPlugin.ts`** — SpriteXPlugin: Phaser 3 global plugin (live asset loading from RTDB, runtime usage tracking, optimized atlas creation). Built to `dist/plugin/` (ESM + IIFE)
 - **`scripts/download-atlas.mjs`** — CLI: download full atlas from RTDB
 - **`scripts/extract-frames.mjs`** — CLI: extract subset of frames into new atlas PNG+JSON
@@ -35,6 +36,7 @@ spriteX is a browser-based sprite atlas builder and manager for the Evil Invader
 /fonts/{family}/meta       — { cell:{w,h}, chars, charSet, glyphs, source, exportedAt }
 ```
 - Font Builder still saves its sheets to `atlases/*` (png + RetroFont config as `json`); `/fonts/*` is the published form written by `scripts/export-font.mjs --publish`
+- **The catalog can live under a root.** A page serving spriteX may set `window.__RTDB_ROOT__` before it loads (codemonkey.games/spriteX/ sets `"shmupX"`); then `characters`, `atlases`, `levels` and `levelAliases` are read and written under `<root>/` and everything else stays at the database root. Spell every browser path to those four as `rtdbPath(...)` from `src/rtdbRoot.ts`. With no root set (easierbycode.com/spriteX/) nothing moves. The CLI scripts, the MCP server and the Phaser plugin always use the root.
 
 ## Atlas JSON Format
 Standard texture atlas format with:
