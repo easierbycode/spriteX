@@ -161,9 +161,11 @@ let loadGen = 0;
 
 /**
  * Fill the font dropdown from the atlases (and fonts) records the VIEW tab
- * already fetched. Promoted `fonts/*` families come first, then sheets that
- * are obviously fonts (Font Builder config, or a name containing "font"); any
- * atlas can still be opened as a font, since older sheets are plain atlases.
+ * already fetched. It lists fonts only: promoted `fonts/*` families first,
+ * then sheets that are obviously fonts (Font Builder config, or a name
+ * containing "font"). Every other atlas is left to the ATLAS view, so an
+ * older plain-atlas sheet whose name says nothing of fonts (scoreNumbers) is
+ * not offered here.
  */
 export function setFontSheetNames(
   atlases: Record<string, { json?: unknown }>,
@@ -174,15 +176,9 @@ export function setFontSheetNames(
   const prev = select.value;
 
   const families = Object.keys(fonts).sort((a, b) => a.localeCompare(b));
-  const sheets: string[] = [];
-  const others: string[] = [];
-  Object.keys(atlases)
-    .sort((a, b) => a.localeCompare(b))
-    .forEach((name) => {
-      const looksLikeFont =
-        /font/i.test(name) || isRetroFontConfigText(atlases[name]?.json);
-      (looksLikeFont ? sheets : others).push(name);
-    });
+  const sheets = Object.keys(atlases)
+    .filter((name) => /font/i.test(name) || isRetroFontConfigText(atlases[name]?.json))
+    .sort((a, b) => a.localeCompare(b));
 
   select.innerHTML = "";
   const placeholder = document.createElement("option");
@@ -204,7 +200,6 @@ export function setFontSheetNames(
   };
   addGroup("FONTS - fonts/*", families, FONT_PREFIX);
   addGroup("FONT SHEETS", sheets);
-  addGroup("OTHER ATLASES", others);
 
   select.disabled = false;
   if (prev && [...select.options].some((o) => o.value === prev)) select.value = prev;
