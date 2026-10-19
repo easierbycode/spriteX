@@ -6,6 +6,7 @@
 // - Character preview from atlas (handles atlas.json as object or string)
 
 import { getDB, ref, get, set } from "./firebase-config";
+import { rtdbPath } from "./rtdbRoot";
 
 /** ============================ Types ============================ */
 
@@ -122,7 +123,7 @@ export async function fetchAllCharacters(): Promise<
 > {
   const db = getDB();
   try {
-    const snapshot = await get(ref(db, "characters"));
+    const snapshot = await get(ref(db, rtdbPath("characters")));
     return snapshot.exists()
       ? (snapshot.val() as Record<string, CharacterData>)
       : {};
@@ -135,7 +136,7 @@ export async function fetchAllCharacters(): Promise<
 export async function fetchAllAtlases(): Promise<Record<string, AtlasData>> {
     const db = getDB();
     try {
-        const snapshot = await get(ref(db, "atlases"));
+        const snapshot = await get(ref(db, rtdbPath("atlases")));
         return snapshot.exists()
         ? (snapshot.val() as Record<string, AtlasData>)
         : {};
@@ -150,7 +151,7 @@ export async function fetchCharacter(
 ): Promise<CharacterData | null> {
   const db = getDB();
   try {
-    const snapshot = await get(ref(db, `characters/${characterId}`));
+    const snapshot = await get(ref(db, rtdbPath(`characters/${characterId}`)));
     return snapshot.exists() ? (snapshot.val() as CharacterData) : null;
   } catch (error) {
     console.error(`Error fetching character ${characterId}:`, error);
@@ -161,7 +162,7 @@ export async function fetchCharacter(
 export async function fetchAtlas(atlasKey: string): Promise<AtlasData | null> {
   const db = getDB();
   try {
-    const snapshot = await get(ref(db, `atlases/${atlasKey}`));
+    const snapshot = await get(ref(db, rtdbPath(`atlases/${atlasKey}`)));
     if (!snapshot.exists()) return null;
     const val = snapshot.val();
     // Legacy records stored the json as an RTDB object tree, which hex-encodes
@@ -222,7 +223,7 @@ export async function saveCharacter(
 ): Promise<void> {
   const db = getDB();
   try {
-    await set(ref(db, `characters/${characterId}`), data);
+    await set(ref(db, rtdbPath(`characters/${characterId}`)), data);
   } catch (error) {
     console.error(`Error saving character ${characterId}:`, error);
     throw error;
@@ -241,7 +242,7 @@ export async function saveAtlas(
     // the atlas's first (default) frame. A string round-trips byte-for-byte.
     // Decoding first heals any legacy k_ keys that reach a re-save.
     const parsed = decodeAtlasFrameKeysDeep(normalizeAtlasJson(data?.json));
-    await set(ref(db, `atlases/${atlasKey}`), {
+    await set(ref(db, rtdbPath(`atlases/${atlasKey}`)), {
       ...data,
       json: parsed ? JSON.stringify(parsed) : data?.json,
     });
@@ -966,7 +967,7 @@ export async function loadCharacterPreviewFromAtlas(
   const db = getDB();
 
   // Character
-  const charSnap = await get(ref(db, `characters/${characterId}`));
+  const charSnap = await get(ref(db, rtdbPath(`characters/${characterId}`)));
   if (!charSnap.exists()) return null;
   const char = charSnap.val() as CharacterData;
 
@@ -980,7 +981,7 @@ export async function loadCharacterPreviewFromAtlas(
   }
 
   // Atlas
-  const atlasSnap = await get(ref(db, `atlases/${textureKey}`));
+  const atlasSnap = await get(ref(db, rtdbPath(`atlases/${textureKey}`)));
   if (!atlasSnap.exists()) return { frameRate, frames: [], textures };
   const atlasVal = atlasSnap.val() as { json?: any; png?: string };
 
